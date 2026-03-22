@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rendición de Gastos y Viáticos - Empresa S.A.</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --azul-empresa: #0f172a; /* Slate 900 */
+            --verde-dinero: #16a34a; /* Green 600 */
+            --gris-fondo: #f1f5f9;
+            --borde: #e2e8f0;
+            --texto: #334155;
+        }
+
+        body { background-color: var(--gris-fondo); margin: 0; padding: 10px; color: var(--texto); font-family: 'Inter', sans-serif; }
+
+        .expense-card { 
+            background: #ffffff; padding: 25px; border-radius: 16px; 
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            max-width: 850px; margin: 20px auto; border: 1px solid var(--borde); position: relative;
+        }
+
+        .expense-card::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 8px; background-color: var(--verde-dinero); border-radius: 16px 16px 0 0; }
+
+        .form-titulo { font-size: 26px; font-weight: 800; color: var(--azul-empresa) !important; margin: 10px 0 5px 0; letter-spacing: -0.5px; }
+        .form-titulo small { font-weight: 400; font-size: 14px; color: #64748b; display: block; }
+
+        .seccion-empleado { background: #f8fafc; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid var(--borde); }
+        .grid-cabecera { display: grid; grid-template-columns: 1fr; gap: 15px; }
+
+        .hs-seccion { margin-bottom: 15px; }
+        .hs-pregunta { display: block; font-weight: 600; margin-bottom: 8px; color: var(--azul-empresa); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+
+        input, select, textarea { width: 100%; padding: 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 14px; background: #fff; box-sizing: border-box;}
+        textarea { resize: vertical; height: 60px; }
+
+        .bloque-ticket { background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid var(--borde); margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border-left: 5px solid var(--verde-dinero); }
+
+        .bloque-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid var(--gris-fondo); padding-bottom: 10px; }
+        .bloque-titulo { font-size: 16px; font-weight: 700; color: var(--azul-empresa); margin: 0; }
+
+        .footer-actions { margin-top: 30px; display: flex; flex-direction: column; gap: 15px; border-top: 1px solid var(--borde); padding-top: 20px;}
+        .btn-add-ticket { width: 100%; padding: 15px; background: #fff; color: var(--verde-dinero); border: 2px dashed var(--verde-dinero); border-radius: 8px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
+        .btn-add-ticket:hover { background: #f0fdf4; }
+        .btn-envio { width: 100%; padding: 16px; background: var(--azul-empresa); color: #fff; border: none; border-radius: 8px; font-weight: 700; text-transform: uppercase; cursor: pointer; font-size: 15px; letter-spacing: 1px; }
+        .btn-envio:hover { background: #1e293b; }
+
+        .btn-eliminar { background: #fff1f1; border: 1px solid #fecaca; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
+
+        @media (min-width: 600px) {
+            .grid-cabecera { grid-template-columns: 2fr 1fr 2fr; gap: 20px; }
+            .footer-actions { flex-direction: row; justify-content: space-between; }
+            .btn-add-ticket { width: auto; padding: 15px 30px; }
+            .btn-envio { width: auto; padding: 16px 60px; }
+        }
+
+        /* Toast Styles */
+        #toast-container { position: fixed; bottom: 30px; right: 30px; z-index: 9999; }
+        .toast { min-width: 350px; padding: 20px; border-radius: 12px; background: #fff; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); transform: translateX(150%); transition: 0.5s cubic-bezier(0.68, -0.55, 0.27, 1.55); border-left: 8px solid var(--verde-dinero); display: flex; align-items: center; gap: 15px;}
+        .toast.show { transform: translateX(0); }
+        .toast-icon { width: 40px; height: 40px; border-radius: 50%; background: #d1fae5; display: flex; align-items: center; justify-content: center; color: var(--verde-dinero); font-size: 20px; }
+        .toast-content { display: flex; flex-direction: column; }
+        .toast-title { font-weight: 700; color: var(--azul-empresa); }
+        .toast-msg { font-size: 13px; color: #64748b; }
+    </style>
+</head>
+<body>
+
+<div id="toast-container"></div>
+
+<div class="expense-card">
+    <h2 class="form-titulo">
+        Rendición de Gastos
+        <small>Portal del Empleado - Envío de Comprobantes</small>
+    </h2>
+
+    <form id="formRendicionGastos">
+        <div class="seccion-empleado">
+            <div class="grid-cabecera">
+                <div class="hs-seccion">
+                    <label class="hs-pregunta">Nombre Completo*</label>
+                    <input type="text" name="emp_nombre" id="txtNombre" placeholder="Ej: Juan Pérez" required>
+                </div>
+                <div class="hs-seccion">
+                    <label class="hs-pregunta">Legajo / ID*</label>
+                    <input type="text" name="emp_legajo" id="txtLegajo" placeholder="Ej: E1024" required>
+                </div>
+                <div class="hs-seccion">
+                    <label class="hs-pregunta">Motivo de la Rendición*</label>
+                    <input type="text" name="rendicion_motivo" placeholder="Ej: Viaje a Neuquén - Cliente YPF" required>
+                </div>
+            </div>
+        </div>
+
+        <div id="contenedor-tickets"></div>
+
+        <div class="footer-actions">
+            <button type="button" class="btn-add-ticket btn-trigger-add">+ Agregar Ticket o Factura</button>
+            <button type="submit" id="btnSubmit" class="btn-envio">Enviar Rendición</button>
+        </div>
+    </form>
+</div>
+
+<script>
+    const contenedor = document.getElementById('contenedor-tickets');
+    let contador = 0;
+    
+    // !!! IMPORTANTE: APUNTA A TU PROXY PHP SEGURO !!!
+    const PROXY_URL = 'https://tu-dominio.com/proxy-n8n.php'; 
+
+    function mostrarToastExito(nombre) {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = 'toast show';
+        toast.innerHTML = `
+            <div class="toast-icon">✓</div>
+            <div class="toast-content">
+                <span class="toast-title">¡Rendición Enviada!</span>
+                <span class="toast-msg">${nombre}, tus gastos fueron registrados y están pendientes de aprobación.</span>
+            </div>
+        `;
+        container.appendChild(toast);
+        setTimeout(() => { 
+            toast.classList.remove('show'); 
+            setTimeout(() => toast.remove(), 500); 
+        }, 6000);
+    }
+
+    // --- FUNCIÓN SENIOR: COMPRIMIR IMAGEN (CLIENT-SIDE) ---
+    async function comprimirImagen(file) {
+        return new Promise((resolve, reject) => {
+            if (!file.type.startsWith('image/')) { resolve(file); return; } // No es imagen, no comprimir
+            
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = (event) => {
+                const img = new Image();
+                img.src = event.target.result;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 1200; // Un poco más de calidad para contabilidad
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > MAX_WIDTH) {
+                        height *= MAX_WIDTH / width;
+                        width = MAX_WIDTH;
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    // Convertir a blob (formato JPEG, calidad 0.7 - balance ideal)
+                    canvas.toBlob((blob) => {
+                        if (blob) {
+                            resolve(blob);
+                        } else {
+                            reject(new Error('Error en la compresión'));
+                        }
+                    }, 'image/jpeg', 0.7);
+                };
+            };
+            reader.onerror = error => reject(error);
+        });
+    }
+
+    function crearNuevoBloqueTicket() {
+        contador++;
+        const div = document.createElement('div');
+        div.className = 'bloque-ticket';
+        div.id = `ticket-${contador}`;
+        div.innerHTML = `
+            <div class="bloque-header">
+                <h4 class="bloque-titulo">Comprobante #${contador}</h4>
+                ${contador > 1 ? `<button type="button" class="btn-eliminar" onclick="this.closest('.bloque-ticket').remove()">Eliminar</button>` : ''}
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 15px; margin-bottom: 15px;">
+                <div class="hs-seccion">
+                    <label class="hs-pregunta">Categoría (Predefinida)*</label>
+                    <select name="ticket_categoria_${contador}" required>
+                        <option value="" disabled selected>Seleccione...</option>
+                        <option value="Alojamiento">Alojamiento (Hotel)</option>
+                        <option value="Alimentacion">Alimentación (Restaurante/Super)</option>
+                        <option value="Transporte_Larga">Transporte Larga Distancia (Aéreo/Bus)</option>
+                        <option value="Transporte_Urbano">Transporte Urbano (Taxi/Uber/Combustible)</option>
+                        <option value="Peajes_Parking">Peajes y Estacionamiento</option>
+                        <option value="Otros">Otros Gastos Varios</option>
+                    </select>
+                </div>
+                <div class="hs-seccion">
+                    <label class="hs-pregunta">Detalle / Observación Breve</label>
+                    <input type="text" name="ticket_obs_${contador}" placeholder="Ej: Cena con cliente de Pecom">
+                </div>
+            </div>
+
+            <div class="hs-seccion" style="margin-bottom:0">
+                <label class="hs-pregunta">Foto del Ticket/Factura (Clara y legible)*</label>
+                <input type="file" class="input-foto" name="ticket_foto_${contador}" accept="image/*" required>
+            </div>
+        `;
+        contenedor.appendChild(div);
+    }
+
+    // Event Delegation para agregar bloques
+    document.addEventListener('click', (e) => {
+        if (e.target && e.target.classList.contains('btn-trigger-add')) {
+            e.preventDefault();
+            crearNuevoBloqueTicket();
+        }
+    });
+
+    // Carga inicial
+    document.addEventListener('DOMContentLoaded', () => {
+        crearNuevoBloqueTicket(); // Agregar el primero por defecto
+    });
+
+    // --- ENVÍO PROFESIONAL CON COMPRESIÓN ORQUESTADA ---
+    document.getElementById('formRendicionGastos').onsubmit = async function(e) {
+        e.preventDefault();
+        const btn = document.getElementById('btnSubmit');
+        const empleadoNombre = document.getElementById('txtNombre').value;
+        
+        // UI State: Procesando
+        btn.disabled = true; 
+        btn.innerHTML = '<span style="display:flex; align-items:center; gap:8px;"><svg class="spinner" width="20" height="20" viewBox="0 0 50 50" style="animation: rotate 2s linear infinite;"><circle cx="25" cy="25" r="20" fill="none" stroke-width="5" stroke="#fff" stroke-dasharray="1, 150" stroke-dashoffset="0" style="stroke-linecap: round; animation: dash 1.5s ease-in-out infinite;"></circle></svg> COMPRIMIENDO FOTOS...</span>';
+
+        const formData = new FormData();
+        
+        // 1. Campos de cabecera
+        formData.append('emp_nombre', empleadoNombre);
+        formData.append('emp_legajo', document.getElementById('txtLegajo').value);
+        formData.append('rendicion_motivo', document.getElementsByName('rendicion_motivo')[0].value);
+        formData.append('fecha_envio', new Date().toISOString());
+
+        // 2. Procesar iterativamente los bloques de tickets
+        const bloques = document.querySelectorAll('.bloque-ticket');
+        const totalTickets = bloques.length;
+        formData.append('total_tickets_enviados', totalTickets);
+
+        for (let i = 0; i < totalTickets; i++) {
+            // Obtenemos el ID real (el contador) del bloque actual
+            const idReal = bloques[i].id.split('-')[1];
+            
+            // Datos de texto del ticket
+            formData.append(`ticket_categoria_${i}`, bloques[i].querySelector('select').value);
+            formData.append(`ticket_obs_${i}`, bloques[i].querySelector('input[type="text"]').value);
+            
+            // FOTO: Captura y Compresión
+            const inputFoto = bloques[i].querySelector('input[type="file"]');
+            if (inputFoto.files[0]) {
+                try {
+                    const fotoComprimida = await comprimirImagen(inputFoto.files[0]);
+                    // Importante usar el índice 'i' para que n8n lo reciba ordenado
+                    formData.append(`ticket_foto_${i}`, fotoComprimida, `gasto_${idReal}.jpg`);
+                } catch (error) {
+                    console.error('Error comprimiendo ticket', idReal, error);
+                    alert(`Error procesando la foto del ticket #${idReal}. Intente nuevamente.`);
+                    btn.disabled = false; btn.innerText = 'Enviar Rendición';
+                    return;
+                }
+            }
+        }
+
+        // UI State: Enviando
+        btn.innerText = 'ENVIANDO A CONTABILIDAD...';
+
+        // 3. Envío al Proxy PHP
+        try {
+            const resp = await fetch(PROXY_URL, {
+                method: 'POST',
+                body: formData
+                // No seteamos Content-Type, fetch lo hace automático con la boundary correcta para FormData
+            });
+
+            if (resp.ok) {
+                mostrarToastExito(empleadoNombre);
+                this.reset(); // Limpiar formulario
+                contenedor.innerHTML = ''; contador = 0; // Resetear bloques dinámicos
+                crearNuevoBloqueTicket(); // Dejar uno vacío
+            } else {
+                const errData = await resp.text();
+                alert('Error en el servidor: ' + errData);
+            }
+        } catch (err) {
+            console.error('Error de red:', err);
+            alert('Error de conexión. Verifique su internet.');
+        } finally {
+            // UI State: Reset
+            btn.disabled = false; 
+            btn.innerText = 'Enviar Rendición';
+        }
+    };
+</script>
+
+<style>
+    /* Estilos extra para el spinner de carga */
+    @keyframes rotate { 100% { transform: rotate(360deg); } }
+    @keyframes dash {
+        0% { stroke-dasharray: 1, 150; stroke-dashoffset: 0; }
+        50% { stroke-dasharray: 90, 150; stroke-dashoffset: -35; }
+        100% { stroke-dasharray: 90, 150; stroke-dashoffset: -124; }
+    }
+</style>
+
+</body>
+</html>
