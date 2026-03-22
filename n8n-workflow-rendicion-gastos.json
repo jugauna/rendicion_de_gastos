@@ -1,0 +1,935 @@
+{
+  "name": "Rendición de Gastos — Drive + IA + Sheets + Aprobación",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Repo: https://github.com/jugauna/rendicion_de_gastos.git | Webhook POST + header X-N8N-SECRET (env N8N_WEBHOOK_SECRET). FormData: total_tickets_enviados, ticket_categoria_i, ticket_obs_i, ticket_foto_i (binario). Columnas Sheet A–P pestaña Rendiciones. Variables: DRIVE_PARENT_RENDICIONES_FOLDER_ID (carpeta raíz Rendiciones), GOOGLE_SHEET_ID, EMAIL_GERENTE, EMAIL_JEFE_CONTABLE. Drive: Zero-Touch — buscar subcarpeta legajo_nombre (sanitizado en drive_subfolder_name) bajo la raíz; si no existe, crear; upload y webViewLink del archivo en esa subcarpeta.",
+    "instanceId": "rendicion-de-gastos-local"
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rendicion-de-gastos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-inicial",
+      "name": "Webhook Inicial",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "rendicion-de-gastos"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "secret-check",
+              "leftValue": "={{ $json.headers['x-n8n-secret'] || $json.headers['X-N8N-SECRET'] || '' }}",
+              "rightValue": "={{ $env.N8N_WEBHOOK_SECRET }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-secret-valido",
+      "name": "IF Secret Válido",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        260,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: 'Unauthorized', repo: 'https://github.com/jugauna/rendicion_de_gastos.git' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-401",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first();\nconst b = item.json.body || item.json;\nconst total = parseInt(String(b.total_tickets_enviados ?? '0'), 10) || 0;\nconst batch_id = `RND-${Date.now()}-${String(b.emp_legajo || 'X').replace(/[^a-zA-Z0-9_-]/g, '')}`;\nconst fechaEnvio = b.fecha_envio || new Date().toISOString();\nconst safeLegajo = String(b.emp_legajo || 'LEG').replace(/[^a-zA-Z0-9_-]/g, '_');\nconst safeNombre = String(b.emp_nombre || 'Nombre').replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ _-]/g, '').trim().replace(/\\s+/g, '_');\nconst folder_safe_name = `${safeLegajo}_${safeNombre}`;\nconst parentId = $vars.DRIVE_PARENT_RENDICIONES_FOLDER_ID;\nif (!parentId) throw new Error('Definí la variable DRIVE_PARENT_RENDICIONES_FOLDER_ID (carpeta raíz Rendiciones en Drive).');\nconst out = [];\nfor (let i = 0; i < total; i++) {\n  const key = `ticket_foto_${i}`;\n  const bin = item.binary?.[key];\n  out.push({\n    json: {\n      batch_id,\n      id_rendicion: `${batch_id}-T${i + 1}`,\n      fecha_envio: fechaEnvio,\n      emp_nombre: b.emp_nombre || '',\n      emp_legajo: b.emp_legajo || '',\n      motivo_rendicion: b.rendicion_motivo || '',\n      ticket_indice: i + 1,\n      ticket_categoria: b[`ticket_categoria_${i}`] ?? '',\n      ticket_obs: b[`ticket_obs_${i}`] || '',\n      folder_safe_name,\n      drive_subfolder_name: folder_safe_name,\n      drive_parent_folder_id: parentId\n    },\n    binary: bin ? { ticket_foto: bin } : {}\n  });\n}\nif (!out.length) throw new Error('total_tickets_enviados inválido o 0 tickets.');\nreturn out;"
+      },
+      "id": "code-expand-tickets",
+      "name": "Code — Expandir Tickets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all = $input.all();\nif (!all.length) return [];\nconst first = all[0];\nreturn [{ json: { ...first.json }, binary: first.binary }];"
+      },
+      "id": "code-primer-item-drive",
+      "name": "Code — Primer ítem (Drive)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "Un solo ítem (mismo empleado en el batch) para buscar/crear la subcarpeta sin duplicar llamadas."
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "query",
+        "queryString": "={{ 'name = \\'' + String($json.drive_subfolder_name).replace(/'/g, \"\\\\'\") + '\\' and \\'' + $json.drive_parent_folder_id + '\\' in parents and mimeType = \\'application/vnd.google-apps.folder\\' and trashed = false' }}",
+        "returnAll": false,
+        "limit": 1,
+        "filter": {},
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "id": "drive-buscar-subcarpeta",
+      "name": "Drive — Buscar subcarpeta empleado",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        760,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "Busca carpeta con nombre drive_subfolder_name (= legajo_nombre sanitizado) bajo drive_parent_folder_id. alwaysOutputData: permite ramificar si no hay coincidencias. Si el import falla, en UI usá File/Folder > Search con la misma query."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const primer = $('Code — Primer ítem (Drive)').first().json;\nconst rows = $input.all().filter((i) => i.json && i.json.id);\nconst folderRow = rows.find((i) => {\n  const m = i.json.mimeType;\n  return !m || m === 'application/vnd.google-apps.folder';\n}) || rows[0];\nif (folderRow && folderRow.json && folderRow.json.id) {\n  return [{ json: { ...primer, empleado_subfolder_id: folderRow.json.id, _subcarpeta: 'encontrada' } }];\n}\nreturn [{ json: { ...primer, empleado_subfolder_id: null, _subcarpeta: 'crear' } }];"
+      },
+      "id": "code-resolver-subcarpeta",
+      "name": "Code — Resolver subcarpeta (búsqueda)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "Si la búsqueda devolvió carpeta, guarda su id; si no, marca crear."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "need-create",
+              "leftValue": "={{ $json.empleado_subfolder_id || '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-crear-subcarpeta",
+      "name": "IF — ¿Crear subcarpeta?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "TRUE = aún no hay id (hay que crear). FALSE = ya existe; ir directo a aplicar id a todos los tickets."
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "name": "={{ $json.drive_subfolder_name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.drive_parent_folder_id }}"
+        },
+        "options": {}
+      },
+      "id": "drive-crear-subcarpeta",
+      "name": "Drive — Crear subcarpeta empleado",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        460
+      ],
+      "notesInFlow": true,
+      "notes": "Nombre exacto drive_subfolder_name (mismo criterio que la búsqueda)."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const created = $input.first().json;\nconst base = $('Code — Resolver subcarpeta (búsqueda)').first().json;\nconst id = created.id || created.folderId;\nif (!id) throw new Error('Drive no devolvió id de carpeta creada.');\nreturn [{ json: { ...base, empleado_subfolder_id: id, _subcarpeta: 'creada' } }];"
+      },
+      "id": "code-pack-tras-crear",
+      "name": "Code — Pack ID tras crear",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const resolved = $input.first().json;\nconst id = resolved.empleado_subfolder_id;\nif (!id) throw new Error('No se resolvió empleado_subfolder_id en Drive (buscar/crear).');\nconst all = $('Code — Expandir Tickets').all();\nreturn all.map((i) => ({\n  json: { ...i.json, empleado_subfolder_id: id },\n  binary: i.binary\n}));"
+      },
+      "id": "code-aplicar-subcarpeta-todos",
+      "name": "Code — Aplicar subcarpeta a todos los tickets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "Replica el id de subcarpeta del empleado a cada ticket del batch (con binarios)."
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "name": "={{ $json.folder_safe_name }}_{{ $json.id_rendicion }}.jpg",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.empleado_subfolder_id }}"
+        },
+        "binaryData": true,
+        "binaryPropertyName": "ticket_foto",
+        "options": {}
+      },
+      "id": "drive-upload-foto",
+      "name": "Drive — Subir foto",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1520,
+        200
+      ],
+      "notesInFlow": true,
+      "notes": "Sube dentro de empleado_subfolder_id (subcarpeta legajo_nombre). webViewLink del archivo alimenta Sheet y merge con OCR."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Extraé datos del comprobante en la imagen. Respondé SOLO JSON válido (sin markdown) con: {\"monto_total\":number|null,\"moneda\":string,\"fecha_factura\":\"YYYY-MM-DD\"|null,\"CUIT_proveedor\":string|null}",
+        "options": {
+          "systemMessage": "Sos un asistente contable multimodal. Si no podés leer un campo, usá null. Monto numérico; moneda ARS/USD u otra; CUIT con o sin guiones.",
+          "passthroughBinaryImages": true
+        }
+      },
+      "id": "ai-agent-ocr",
+      "name": "AI Agent — OCR multimodal",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1520,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "id": "openai-chat-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1520,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": false
+        }
+      },
+      "id": "merge-drive-y-ocr",
+      "name": "Merge — Drive + OCR",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const merged = $input.item.json;\nconst idx = $itemIndex;\nconst base = $('Code — Expandir Tickets').all()[idx].json;\nconst ocrRaw = merged.output ?? merged.text ?? '';\nlet ocr = { monto_total: null, moneda: '', fecha_factura: null, CUIT_proveedor: null };\ntry {\n  const m = String(ocrRaw).match(/\\{[\\s\\S]*\\}/);\n  if (m) ocr = { ...ocr, ...JSON.parse(m[0]) };\n} catch (e) {}\nconst link = merged.webViewLink || merged.webContentLink || '';\nconst idFoto = merged.id || merged.fileId || '';\nreturn {\n  json: {\n    ...base,\n    id_foto_drive: idFoto,\n    link_foto_drive: link,\n    fecha_ticket_ia: ocr.fecha_factura || '',\n    monto_total_ia: ocr.monto_total,\n    moneda_ia: ocr.moneda || '',\n    cuit_proveedor_ia: ocr.CUIT_proveedor || ''\n  }\n};"
+      },
+      "id": "code-unir-fila-sheet",
+      "name": "Code — Unir fila Sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "link_foto_drive e id_foto_drive salen del nodo Drive — Subir foto (merge posición 0); OCR solo aporta campos de texto."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $vars.GOOGLE_SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Rendiciones"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID_Rendicion": "={{ $json.id_rendicion }}",
+            "Fecha_Envio": "={{ $json.fecha_envio }}",
+            "Empleado_Nombre": "={{ $json.emp_nombre }}",
+            "Empleado_Legajo": "={{ $json.emp_legajo }}",
+            "Motivo_Rendicion": "={{ $json.motivo_rendicion }}",
+            "Ticket_Indice": "={{ $json.ticket_indice }}",
+            "Categoria_Postulada": "={{ $json.ticket_categoria }}",
+            "Observaciones_Web": "={{ $json.ticket_obs }}",
+            "ID_Foto_Drive": "={{ $json.id_foto_drive }}",
+            "Link_Foto_Drive": "={{ $json.link_foto_drive }}",
+            "Fecha_Ticket_IA": "={{ $json.fecha_ticket_ia }}",
+            "Monto_Total_IA": "={{ $json.monto_total_ia }}",
+            "Moneda_IA": "={{ $json.moneda_ia }}",
+            "CUIT_Proveedor_IA": "={{ $json.cuit_proveedor_ia }}",
+            "Estado": "Pendiente",
+            "Fecha_Resolucion": ""
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-append",
+      "name": "Sheets — Append Rendiciones",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all = $input.all();\nconst j0 = all[0].json;\nconst ids = all.map(i => i.json.id_rendicion);\nreturn [{\n  json: {\n    batch_id: j0.batch_id,\n    id_rendiciones: ids,\n    emp_nombre: j0.emp_nombre,\n    emp_legajo: j0.emp_legajo,\n    motivo_rendicion: j0.motivo_rendicion,\n    fecha_envio: j0.fecha_envio,\n    resumen_html: all.map(i => {\n      const r = i.json;\n      return `<li><strong>${r.ticket_categoria || ''}</strong> — ${r.monto_total_ia ?? ''} ${r.moneda_ia || ''} — <a href=\"${r.link_foto_drive || ''}\" target=\"_blank\">Foto Drive</a></li>`;\n    }).join(''),\n    link_primera_foto: j0.link_foto_drive || all[0].json.link_foto_drive || '',\n    repo: 'https://github.com/jugauna/rendicion_de_gastos.git'\n  }\n}];"
+      },
+      "id": "code-aggregate-batch",
+      "name": "Code — Batch email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "aprobacion-gerente"
+        }
+      },
+      "id": "wait-aprobacion",
+      "name": "Wait — Webhook aprobación",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2720,
+        300
+      ],
+      "webhookId": "wait-aprobacion-gerente"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $vars.EMAIL_GERENTE }}",
+        "subject": "=Rendición de gastos — Aprobación ({{ $json.emp_legajo }})",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <title>Aprobación de gasto</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n</head>\n<body style=\"margin:0;padding:0;background-color:#ffffff;-webkit-font-smoothing:antialiased;\">\n  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color:#ffffff;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 16px 32px 16px;\">\n        <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"max-width:600px;width:100%;\">\n\n          <!-- Banner + logo -->\n          <tr>\n            <td align=\"center\" style=\"background-color:#009CDE;border-radius:12px 12px 0 0;padding:28px 24px;\">\n              <img src=\"https://TU-DOMINIO-PUBLICO/image_5.png\" width=\"180\" height=\"auto\" alt=\"Logo\" style=\"display:block;margin:0 auto;max-width:220px;height:auto;border:0;outline:none;text-decoration:none;\" />\n            </td>\n          </tr>\n          <tr>\n            <td style=\"height:4px;background-color:#009CDE;line-height:4px;font-size:0;\">&nbsp;</td>\n          </tr>\n\n          <!-- Cuerpo -->\n          <tr>\n            <td style=\"background-color:#ffffff;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:28px 24px 8px 24px;\">\n              <h1 style=\"margin:0 0 8px 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:1.35;font-weight:700;color:#1A202C;\">\n                Aprobación de Gasto: {{ $json.Empleado_Nombre }} ({{ $json.Empleado_Legajo }})\n              </h1>\n              <p style=\"margin:0 0 24px 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#4a5568;\">\n                Revisá el detalle y decidí la rendición desde los botones al final del mensaje.\n              </p>\n\n              <!-- Tabla resumen -->\n              <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"border-collapse:separate;border-spacing:0;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;\">\n                <tr>\n                  <td colspan=\"2\" style=\"background-color:#f8fafc;padding:12px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#009CDE;border-bottom:1px solid #e2e8f0;\">\n                    Resumen\n                  </td>\n                </tr>\n                <tr>\n                  <td style=\"padding:14px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:#64748b;width:42%;border-bottom:1px solid #e2e8f0;vertical-align:top;\">Gasto</td>\n                  <td style=\"padding:14px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:500;color:#1A202C;border-bottom:1px solid #e2e8f0;vertical-align:top;\">{{ $json.Motivo_Rendicion }}</td>\n                </tr>\n                <tr>\n                  <td style=\"padding:14px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:#64748b;border-bottom:1px solid #e2e8f0;vertical-align:top;\">Monto Sugerido (IA)</td>\n                  <td style=\"padding:14px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#1A202C;border-bottom:1px solid #e2e8f0;vertical-align:top;\">{{ $json.moneda }} {{ $json.monto_total }}</td>\n                </tr>\n                <tr>\n                  <td style=\"padding:14px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:#64748b;border-bottom:1px solid #e2e8f0;vertical-align:top;\">Fecha Ticket (IA)</td>\n                  <td style=\"padding:14px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:500;color:#1A202C;border-bottom:1px solid #e2e8f0;vertical-align:top;\">{{ $json.fecha_factura }}</td>\n                </tr>\n                <tr>\n                  <td style=\"padding:14px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:#64748b;vertical-align:top;\">CUIT Proveedor (IA)</td>\n                  <td style=\"padding:14px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:500;color:#1A202C;vertical-align:top;\">{{ $json.cuit_proveedor }}</td>\n                </tr>\n              </table>\n\n              <!-- Botón comprobante -->\n              <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"margin-top:28px;\">\n                <tr>\n                  <td align=\"center\">\n                    <a href=\"{{ $json.link_foto_drive }}\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"display:inline-block;padding:14px 28px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1.25;color:#ffffff;text-decoration:none;background-color:#009CDE;border-radius:10px;min-width:200px;text-align:center;\">\n                      Ver Comprobante Original\n                    </a>\n                  </td>\n                </tr>\n              </table>\n\n              <p style=\"margin:28px 0 8px 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.5;color:#64748b;text-align:center;\">\n                Resolución de la solicitud\n              </p>\n\n              <!-- Aprobar / Rechazar -->\n              <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"margin-top:8px;\">\n                <tr>\n                  <td align=\"center\" style=\"padding:8px 0;\">\n                    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"max-width:520px;\">\n                      <tr>\n                        <td align=\"center\" style=\"padding:8px 6px;\" width=\"50%\">\n                          <a href=\"{{ $execution.resumeUrl }}?decision=approve\" style=\"display:block;padding:16px 12px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1.25;color:#ffffff;text-decoration:none;background-color:#16a34a;border-radius:10px;text-align:center;\">\n                            Aprobar\n                          </a>\n                        </td>\n                        <td align=\"center\" style=\"padding:8px 6px;\" width=\"50%\">\n                          <a href=\"{{ $execution.resumeUrl }}?decision=reject\" style=\"display:block;padding:16px 12px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1.25;color:#ffffff;text-decoration:none;background-color:#dc2626;border-radius:10px;text-align:center;\">\n                            Rechazar\n                          </a>\n                        </td>\n                      </tr>\n                    </table>\n                  </td>\n                </tr>\n              </table>\n\n              <p style=\"margin:24px 0 0 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:11px;line-height:1.5;color:#a0aec0;text-align:center;\">\n                Si el botón no funciona, copiá y pegá el enlace en el navegador. Este mensaje es transaccional; no respondas a este correo si fue enviado desde un buzón no monitoreado.\n              </p>\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>\n",
+        "options": {}
+      },
+      "id": "email-gerente",
+      "name": "Email — Gerente (HTML)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "no-decision-yet",
+              "leftValue": "={{ $json.query?.decision || $json.body?.decision || $json.decision || '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-primera-pasada",
+      "name": "IF — Sin decisión (enviar email)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2840,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "Rama TRUE: primera ejecución del Wait (aún no hay ?decision=). Enviá email al gerente. Rama FALSE: el gerente hizo clic; no re-envía email."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "dec-aprob",
+              "leftValue": "={{ $json.query?.decision || $json.body?.decision || $json.decision || '' }}",
+              "rightValue": "aprobar",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-decision-aprobada",
+      "name": "IF Aprobada",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const prev = $('Code — Batch email').first().json;\nconst ids = prev.id_rendiciones || [];\nconst decision = $json.query?.decision || $json.body?.decision || $json.decision || '';\nconst aprobada = decision === 'aprobar';\nconst estado = aprobada ? 'Aprobada' : 'Rechazada';\nreturn ids.map(id => ({ json: { ID_Rendicion: id, Estado: estado, Fecha_Resolucion: new Date().toISOString() } }));"
+      },
+      "id": "code-split-updates",
+      "name": "Code — Filas a actualizar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $vars.GOOGLE_SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Rendiciones"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Estado": "={{ $json.Estado }}",
+            "Fecha_Resolucion": "={{ $json.Fecha_Resolucion }}"
+          }
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "id": "sheets-update-estado",
+      "name": "Sheets — Update por ID_Rendicion",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3680,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "En la UI: operación Update, modo por fila, columna a buscar = ID_Rendicion, valor = expresión $json.ID_Rendicion (según versión n8n)."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = $input.all();\nif (!rows.length) return [];\nconst estado = rows[0].json.Estado;\nif (estado === 'Aprobada') {\n  return [{ json: { _notificar_contable: true } }];\n}\nreturn [];"
+      },
+      "id": "code-solo-si-aprobada",
+      "name": "Code — Notificar contable (solo aprobada)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "notif",
+              "leftValue": "={{ $json._notificar_contable }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-notificar-contable",
+      "name": "IF — Notificar contable",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $vars.EMAIL_JEFE_CONTABLE }}",
+        "subject": "=Rendición APROBADA — {{ $('Code — Batch email').first().json.emp_legajo }}",
+        "emailType": "html",
+        "message": "=<p>La rendición fue <strong>aprobada</strong> por el gerente.</p><p>Batch: {{ $('Code — Batch email').first().json.batch_id }}</p><p>IDs: {{ $('Code — Batch email').first().json.id_rendiciones.join(', ') }}</p><p>Repo: https://github.com/jugauna/rendicion_de_gastos.git</p>",
+        "options": {}
+      },
+      "id": "email-contable",
+      "name": "Email — Jefe Contable",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3900,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, batch_id: $('Code — Batch email').first().json.batch_id, repo: 'https://github.com/jugauna/rendicion_de_gastos.git', mensaje: 'Recibido. Pendiente de aprobación del gerente.' }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-200-ok",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2240,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Inicial": {
+      "main": [
+        [
+          {
+            "node": "IF Secret Válido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Secret Válido": {
+      "main": [
+        [
+          {
+            "node": "Code — Expandir Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Expandir Tickets": {
+      "main": [
+        [
+          {
+            "node": "Code — Primer ítem (Drive)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Primer ítem (Drive)": {
+      "main": [
+        [
+          {
+            "node": "Drive — Buscar subcarpeta empleado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive — Buscar subcarpeta empleado": {
+      "main": [
+        [
+          {
+            "node": "Code — Resolver subcarpeta (búsqueda)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Resolver subcarpeta (búsqueda)": {
+      "main": [
+        [
+          {
+            "node": "IF — ¿Crear subcarpeta?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — ¿Crear subcarpeta?": {
+      "main": [
+        [
+          {
+            "node": "Drive — Crear subcarpeta empleado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code — Aplicar subcarpeta a todos los tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive — Crear subcarpeta empleado": {
+      "main": [
+        [
+          {
+            "node": "Code — Pack ID tras crear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Pack ID tras crear": {
+      "main": [
+        [
+          {
+            "node": "Code — Aplicar subcarpeta a todos los tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Aplicar subcarpeta a todos los tickets": {
+      "main": [
+        [
+          {
+            "node": "Drive — Subir foto",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AI Agent — OCR multimodal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive — Subir foto": {
+      "main": [
+        [
+          {
+            "node": "Merge — Drive + OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent — OCR multimodal": {
+      "main": [
+        [
+          {
+            "node": "Merge — Drive + OCR",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent — OCR multimodal",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge — Drive + OCR": {
+      "main": [
+        [
+          {
+            "node": "Code — Unir fila Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Unir fila Sheet": {
+      "main": [
+        [
+          {
+            "node": "Sheets — Append Rendiciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets — Append Rendiciones": {
+      "main": [
+        [
+          {
+            "node": "Code — Batch email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Batch email": {
+      "main": [
+        [
+          {
+            "node": "Wait — Webhook aprobación",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait — Webhook aprobación": {
+      "main": [
+        [
+          {
+            "node": "IF — Sin decisión (enviar email)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Sin decisión (enviar email)": {
+      "main": [
+        [
+          {
+            "node": "Email — Gerente (HTML)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Aprobada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email — Gerente (HTML)": {
+      "main": [
+        []
+      ]
+    },
+    "IF Aprobada": {
+      "main": [
+        [
+          {
+            "node": "Code — Filas a actualizar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code — Filas a actualizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Filas a actualizar": {
+      "main": [
+        [
+          {
+            "node": "Sheets — Update por ID_Rendicion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets — Update por ID_Rendicion": {
+      "main": [
+        [
+          {
+            "node": "Code — Notificar contable (solo aprobada)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Notificar contable (solo aprobada)": {
+      "main": [
+        [
+          {
+            "node": "IF — Notificar contable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Notificar contable": {
+      "main": [
+        [
+          {
+            "node": "Email — Jefe Contable",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  }
+}

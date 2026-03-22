@@ -1,0 +1,31 @@
+# CURSOR RULES - SISTEMA DE RENDICIÓN DE GASTOS
+# Usuario: Juan Gauna (Senior IT Lead / Project Manager)
+# Repo: https://github.com/jugauna/rendicion_de_gastos.git
+
+# 1. PREFERENCIAS DE IDIOMA Y TONO
+- Idioma: Español (Argentina).
+- Tono: Profesional, técnico y directo. Tratar como a un par Senior.
+
+# 2. ESTÁNDARES TÉCNICOS
+- n8n: Versión 1.0+. Usar esquemas de nodos modernos.
+- PHP/JS: Priorizar seguridad y modularidad.
+
+# 3. ESQUEMA DE DATOS (WordPress -> Proxy -> n8n)
+El formulario envía un FormData dinámico (N tickets). Referenciar @inspeccion.html para inputs:
+- emp_nombre, emp_legajo, rendicion_motivo, total_tickets_enviados.
+- ticket_categoria_N, ticket_obs_N, ticket_foto_N (Binary).
+
+# 4. ESTRUCTURA DEL GOOGLE SHEET (Pestaña "Rendiciones")
+Al mapear nodos de Google Sheets, usar estrictamente estas columnas:
+[[google_sheets_schema]]
+columns = [
+  "ID_Rendicion", "Fecha_Envio", "Empleado_Nombre", "Empleado_Legajo", 
+  "Motivo_Rendicion", "Ticket_Indice", "Categoria_Postulada", "Observaciones_Web",
+  "ID_Foto_Drive", "Link_Foto_Drive", "Fecha_Ticket_IA", "Monto_Total_IA", 
+  "Moneda_IA", "CUIT_Proveedor_IA", "Estado", "Fecha_Resolucion"
+]
+
+# 5. REGLAS DE NEGOCIO Y SEGURIDAD
+- Seguridad: Todos los Webhooks de n8n DEBEN requerir el Header "X-N8N-SECRET".
+- Almacenamiento: Carpetas en Drive: "Rendiciones/[Legajo]_[Nombre]".
+- IA Multimodal: Configurar prompts para extraer datos contables y devolver JSON puro.
