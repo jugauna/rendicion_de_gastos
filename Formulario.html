@@ -109,7 +109,7 @@
     let contador = 0;
     
     // !!! IMPORTANTE: APUNTA A TU PROXY PHP SEGURO !!!
-    const PROXY_URL = 'https://tu-dominio.com/proxy-n8n.php'; 
+    const PROXY_URL = 'https://srv848-files.hstgr.io/b999178d16a41366/files/public_html/proxy-n8n.php'; 
 
     function mostrarToastExito(nombre) {
         const container = document.getElementById('toast-container');
@@ -132,8 +132,11 @@
     // --- FUNCIÓN SENIOR: COMPRIMIR IMAGEN (CLIENT-SIDE) ---
     async function comprimirImagen(file) {
         return new Promise((resolve, reject) => {
-            if (!file.type.startsWith('image/')) { resolve(file); return; } // No es imagen, no comprimir
-            
+            if (!file.type.startsWith('image/')) {
+                reject(new Error('Solo se admiten imágenes (JPG).'));
+                return;
+            }
+
             const reader = new FileReader();
             reader.readAsDataURL(file);
             reader.onload = (event) => {
@@ -200,8 +203,8 @@
             </div>
 
             <div class="hs-seccion" style="margin-bottom:0">
-                <label class="hs-pregunta">Foto del Ticket/Factura (Clara y legible)*</label>
-                <input type="file" class="input-foto" name="ticket_foto_${contador}" accept="image/*" required>
+                <label class="hs-pregunta">Comprobante — imagen JPG*</label>
+                <input type="file" class="input-foto" name="ticket_foto_${contador}" accept="image/jpeg,.jpg,.jpeg" required>
             </div>
         `;
         contenedor.appendChild(div);
@@ -228,7 +231,7 @@
         
         // UI State: Procesando
         btn.disabled = true; 
-        btn.innerHTML = '<span style="display:flex; align-items:center; gap:8px;"><svg class="spinner" width="20" height="20" viewBox="0 0 50 50" style="animation: rotate 2s linear infinite;"><circle cx="25" cy="25" r="20" fill="none" stroke-width="5" stroke="#fff" stroke-dasharray="1, 150" stroke-dashoffset="0" style="stroke-linecap: round; animation: dash 1.5s ease-in-out infinite;"></circle></svg> COMPRIMIENDO FOTOS...</span>';
+        btn.innerHTML = '<span style="display:flex; align-items:center; gap:8px;"><svg class="spinner" width="20" height="20" viewBox="0 0 50 50" style="animation: rotate 2s linear infinite;"><circle cx="25" cy="25" r="20" fill="none" stroke-width="5" stroke="#fff" stroke-dasharray="1, 150" stroke-dashoffset="0" style="stroke-linecap: round; animation: dash 1.5s ease-in-out infinite;"></circle></svg> PROCESANDO ARCHIVOS...</span>';
 
         const formData = new FormData();
         
@@ -251,16 +254,17 @@
             formData.append(`ticket_categoria_${i}`, bloques[i].querySelector('select').value);
             formData.append(`ticket_obs_${i}`, bloques[i].querySelector('input[type="text"]').value);
             
-            // FOTO: Captura y Compresión
+            // Comprobante: imagen comprimida a JPEG
             const inputFoto = bloques[i].querySelector('input[type="file"]');
             if (inputFoto.files[0]) {
                 try {
-                    const fotoComprimida = await comprimirImagen(inputFoto.files[0]);
-                    // Importante usar el índice 'i' para que n8n lo reciba ordenado
-                    formData.append(`ticket_foto_${i}`, fotoComprimida, `gasto_${idReal}.jpg`);
+                    const archivo = inputFoto.files[0];
+                    const procesado = await comprimirImagen(archivo);
+                    const nombreArchivo = `gasto_${idReal}.jpg`;
+                    formData.append(`ticket_foto_${i}`, procesado, nombreArchivo);
                 } catch (error) {
-                    console.error('Error comprimiendo ticket', idReal, error);
-                    alert(`Error procesando la foto del ticket #${idReal}. Intente nuevamente.`);
+                    console.error('Error procesando ticket', idReal, error);
+                    alert(`Error procesando el comprobante del ticket #${idReal}. Intente nuevamente.`);
                     btn.disabled = false; btn.innerText = 'Enviar Rendición';
                     return;
                 }
