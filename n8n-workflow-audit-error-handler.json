@@ -1,0 +1,107 @@
+{
+  "name": "Audit — Error logs a Google Sheets (Audit_Logs)",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Asigná este workflow como «Error workflow» en Ajustes del flujo principal (Rendición de Gastos). Hoja Audit_Logs fila 1: Timestamp | Outcome | Workflow_Name | Execution_Id | Last_Node | Detail | Compliance_Score_Batch | Parser_Engine_Summary | Error_Message | Error_Stack | Execution_Url. OK y resumen compliance los escribe el flujo principal. Este flujo añade Outcome=Error (campos batch vacíos). Misma credencial y spreadsheet."
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger-audit",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json || {};\nconst ex = item.execution || {};\nconst wf = item.workflow || {};\nconst err = ex.error || {};\nconst rawMsg = err.message ?? err.description ?? (typeof ex.error === 'string' ? ex.error : JSON.stringify(ex.error || {}));\nreturn [{\n  json: {\n    Timestamp: new Date().toISOString(),\n    Outcome: 'Error',\n    Workflow_Name: String(wf.name || ''),\n    Execution_Id: String(ex.id ?? ''),\n    Last_Node: String(ex.lastNodeExecuted || ''),\n    Detail: '',\n    Compliance_Score_Batch: '',\n    Parser_Engine_Summary: '',\n    Error_Message: String(rawMsg).slice(0, 2000),\n    Error_Stack: String(err.stack || '').slice(0, 4000),\n    Execution_Url: String(ex.url || '')\n  }\n}];"
+      },
+      "id": "code-formato-audit",
+      "name": "Code — Formato fila Audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1u30U7L8RzrAuj2F9Y9NYe3ke75DdFNtKp7N_gy44e2Y"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Audit_Logs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.Timestamp }}",
+            "Outcome": "={{ $json.Outcome }}",
+            "Workflow_Name": "={{ $json.Workflow_Name }}",
+            "Execution_Id": "={{ $json.Execution_Id }}",
+            "Last_Node": "={{ $json.Last_Node }}",
+            "Detail": "={{ $json.Detail }}",
+            "Compliance_Score_Batch": "={{ $json.Compliance_Score_Batch }}",
+            "Parser_Engine_Summary": "={{ $json.Parser_Engine_Summary }}",
+            "Error_Message": "={{ $json.Error_Message }}",
+            "Error_Stack": "={{ $json.Error_Stack }}",
+            "Execution_Url": "={{ $json.Execution_Url }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-append-audit",
+      "name": "Sheets — Append Audit_Logs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        480,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "Mismo documentId que el flujo principal o reemplazalo por expresión. Primera fila de la hoja = encabezados con los mismos nombres de columna."
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code — Formato fila Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Formato fila Audit": {
+      "main": [
+        [
+          {
+            "node": "Sheets — Append Audit_Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "versionId": "audit-error-handler-v2-outcome",
+  "id": "audit-error-handler-local"
+}

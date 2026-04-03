@@ -2,7 +2,7 @@
   "name": "Rendición de Gastos — Drive + IA + Sheets + Aprobación",
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Repo: https://github.com/jugauna/rendicion_de_gastos.git | IF Secret: bypass pruebas (siempre TRUE). Variables — Config: drive_parent_folder_id, google_sheet_id, emails. Sheets/Drive usan $('Variables — Config'). Email gerente: $('Code — Batch email').first().json. Rehabilitá validación X-N8N-SECRET antes de producción.",
+    "description": "Repo: https://github.com/jugauna/rendicion_de_gastos.git | IA: OpenAI Whisper (audio opcional) + OpenAI visión (gpt-4o) sobre la imagen del comprobante: OCR y compliance en un solo paso. Google Drive + Sheets + mail gerente/contable + Wait webhook + Audit_Logs. X-N8N-SECRET / IF Secret; credenciales OpenAI y Google en n8n.",
     "instanceId": "rendicion-de-gastos-local"
   },
   "settings": {
@@ -53,6 +53,86 @@
           },
           "conditions": [
             {
+              "id": "has-audio",
+              "leftValue": "={{ Object.keys($binary || {}).includes('explicacion_audio') ? 'yes' : 'no' }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-audio-adjunto",
+      "name": "IF — ¿Audio explicación?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        260,
+        400
+      ],
+      "notesInFlow": true,
+      "notes": "Multipart: campo explicacion_audio (webm/ogg/mp3). Si TRUE → Whisper; si FALSE → pasa directo a IF Secret."
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "binaryPropertyName": "explicacion_audio",
+        "options": {}
+      },
+      "id": "openai-whisper-transcribe",
+      "name": "OpenAI — Whisper (transcribe)",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        400,
+        260
+      ],
+      "notesInFlow": true,
+      "notes": "Credencial OpenAI API. Acepta audio y video con pista de sonido (webm/mp4 desde móvil). Idioma en Options → language es (opcional). Si 400 Bad request: revisá MIME en proxy y nombre con extensión. Máx. 25 MB."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const v = $('Variables — Config').first();\nconst t = String($input.first().json.text || '').trim();\nconst b = v.json.body || v.json;\nconst baseBody = typeof b === 'object' && b !== null && !Array.isArray(b) ? { ...b } : {};\nif (t) {\n  const prev = String(baseBody.rendicion_motivo || '').trim();\n  baseBody.rendicion_motivo = prev ? `${prev} — [Voz] ${t}` : `[Voz] ${t}`;\n  baseBody.explicacion_audio_transcrita = t;\n}\nconst nb = { ...v.binary };\ndelete nb.explicacion_audio;\nreturn [{\n  json: { ...v.json, body: baseBody },\n  binary: nb\n}];"
+      },
+      "id": "code-merge-audio-transcripcion",
+      "name": "Code — Merge transcripción en body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all();"
+      },
+      "id": "code-passthrough-sin-audio",
+      "name": "Code — Sin audio (passthrough)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
               "id": "bypass-pruebas-directas",
               "leftValue": "={{ 'bypass-webhook-tests' }}",
               "rightValue": "={{ 'bypass-webhook-tests' }}",
@@ -71,7 +151,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        260,
+        720,
         400
       ],
       "notesInFlow": true,
@@ -90,14 +170,14 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        260,
+        720,
         620
       ]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const item = $input.first();\nconst b = item.json.body || item.json;\nconst total = parseInt(String(b.total_tickets_enviados ?? '0'), 10) || 0;\nconst batch_id = `RND-${Date.now()}-${String(b.emp_legajo || 'X').replace(/[^a-zA-Z0-9_-]/g, '')}`;\nconst fechaEnvio = b.fecha_envio || new Date().toISOString();\nconst safeLegajo = String(b.emp_legajo || 'LEG').replace(/[^a-zA-Z0-9_-]/g, '_');\nconst safeNombre = String(b.emp_nombre || 'Nombre').replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ _-]/g, '').trim().replace(/\\s+/g, '_');\nconst folder_safe_name = `${safeLegajo}_${safeNombre}`;\nconst parentId = item.json.drive_parent_folder_id;\nif (!parentId) throw new Error('Completá drive_parent_folder_id en el nodo Variables — Config (carpeta raíz Rendiciones en Drive).');\nconst out = [];\nfor (let i = 0; i < total; i++) {\n  const key = `ticket_foto_${i}`;\n  const bin = item.binary?.[key];\n  out.push({\n    json: {\n      batch_id,\n      id_rendicion: `${batch_id}-T${i + 1}`,\n      fecha_envio: fechaEnvio,\n      emp_nombre: b.emp_nombre || '',\n      emp_legajo: b.emp_legajo || '',\n      motivo_rendicion: b.rendicion_motivo || '',\n      ticket_indice: i + 1,\n      ticket_categoria: b[`ticket_categoria_${i}`] ?? '',\n      ticket_obs: b[`ticket_obs_${i}`] || '',\n      folder_safe_name,\n      drive_subfolder_name: folder_safe_name,\n      drive_parent_folder_id: parentId\n    },\n    binary: bin ? { ticket_foto: bin } : {}\n  });\n}\nif (!out.length) throw new Error('total_tickets_enviados inválido o 0 tickets.');\nreturn out;"
+        "jsCode": "const item = $input.first();\nconst b = item.json.body || item.json;\nconst total = parseInt(String(b.total_tickets_enviados ?? '0'), 10) || 0;\nconst batch_id = `RND-${Date.now()}-${String(b.emp_legajo || 'X').replace(/[^a-zA-Z0-9_-]/g, '')}`;\nconst fechaEnvio = b.fecha_envio || new Date().toISOString();\nconst safeLegajo = String(b.emp_legajo || 'LEG').replace(/[^a-zA-Z0-9_-]/g, '_');\nconst safeNombre = String(b.emp_nombre || 'Nombre').replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ _-]/g, '').trim().replace(/\\s+/g, '_');\nconst folder_safe_name = `${safeLegajo}_${safeNombre}`;\nconst parentId = item.json.drive_parent_folder_id;\nif (!parentId) throw new Error('Completá drive_parent_folder_id en el nodo Variables — Config (carpeta raíz Rendiciones en Drive).');\nconst out = [];\nfor (let i = 0; i < total; i++) {\n  const key = `ticket_foto_${i}`;\n  const bin = item.binary?.[key];\n  out.push({\n    json: {\n      batch_id,\n      id_rendicion: `${batch_id}-T${i + 1}`,\n      fecha_envio: fechaEnvio,\n      emp_nombre: b.emp_nombre || '',\n      emp_legajo: b.emp_legajo || '',\n      motivo_rendicion: b.rendicion_motivo || '',\n      explicacion_audio_transcrita: b.explicacion_audio_transcrita || '',\n      ticket_indice: i + 1,\n      ticket_categoria: b[`ticket_categoria_${i}`] ?? '',\n      ticket_obs: b[`ticket_obs_${i}`] || '',\n      folder_safe_name,\n      drive_subfolder_name: folder_safe_name,\n      drive_parent_folder_id: parentId\n    },\n    binary: bin ? { ticket_foto: bin } : {}\n  });\n}\nif (!out.length) throw new Error('total_tickets_enviados inválido o 0 tickets.');\nreturn out;"
       },
       "id": "code-expand-tickets",
       "name": "Code — Expandir Tickets",
@@ -301,45 +381,48 @@
     },
     {
       "parameters": {
-        "promptType": "define",
-        "text": "Extraé datos del comprobante en la imagen JPG adjunta. Respondé SOLO JSON válido (sin markdown) con exactamente las claves: {\"monto_total\":number|null,\"moneda\":string,\"fecha_factura\":\"YYYY-MM-DD\"|null,\"CUIT_proveedor\":string|null}. Usá: monto_total como número con punto decimal (ej: 1234.56) o null; moneda sin símbolo (ej: ARS) o \"\"; fecha_factura en YYYY-MM-DD o null; CUIT_proveedor solo dígitos (sin guiones) o null.",
-        "options": {
-          "systemMessage": "Sos un asistente contable. Procesá la imagen JPEG del comprobante (binario ticket_foto) y extraé los datos. Respondé SOLO JSON válido. Si no podés leer un campo, devolvé null. Monto: número (usa punto decimal) o null. Moneda: string (sin símbolo) o \"\". Fecha: YYYY-MM-DD o null. CUIT: solo dígitos o null.",
-          "passthroughBinaryImages": true
-        }
+        "mode": "runOnceForEachItem",
+        "jsCode": "const j = $input.item.json;\nconst audio = String(j.explicacion_audio_transcrita || '').trim();\nconst cat = String(j.ticket_categoria || '');\nconst motor = 'openai_vision';\nconst RULES = `Sos un asistente para rendiciones de gastos (Argentina). Vas a ver la IMAGEN del comprobante (OCR + interpretación).\n\n- Extraé de la imagen: monto total, moneda, fecha del comprobante, CUIT del proveedor si figura.\n- No apliques políticas de topes ni montos máximos de empresa; evaluá calidad de extracción y coherencia de datos.\n- Si hay transcripción de voz (Whisper), usala solo para detectar contradicciones claras con lo visible en el comprobante.\n- Compliance_Score entre 0.0 y 1.0 según legibilidad del comprobante y coherencia con la voz (no según si el gasto está permitido).`;\nconst ocr_compliance_prompt = `${RULES}\\n\\nMotor (referencia): ${motor}\\nCategoría declarada por el empleado: ${cat}\\nTranscripción voz (Whisper): ${audio || '(sin audio)'}\\n\\n--- Tarea ---\\nAnalizá la imagen adjunta del comprobante.\\n\\n--- Salida obligatoria ---\\nRespondé con UN solo objeto JSON válido (sin markdown ni texto fuera del JSON). Claves exactas:\\n- monto_total (number|null)\\n- moneda (string, ej. ARS, USD o vacío)\\n- fecha_factura (string YYYY-MM-DD|null)\\n- CUIT_proveedor (string solo dígitos o null)\\n- Compliance_Score (number 0-1)\\n- compliance_observaciones (string breve)\\n- violaciones (array de strings; observaciones puntuales, sin reglas monetarias)\\n- parser_engine (debe ser exactamente \\\"openai_vision\\\")`;\nreturn {\n  json: { ...j, ocr_compliance_prompt, parser_engine: motor },\n  binary: $input.item.binary || {}\n};"
       },
-      "id": "ai-agent-ocr",
-      "name": "AI Agent — OCR (JPG)",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 1.7,
+      "id": "code-prompt-ocr-compliance-vision",
+      "name": "Code — Prompt OCR + Compliance (visión)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1520,
-        440
+        480
       ],
       "notesInFlow": true,
-      "notes": "Prompt sin '=' inicial (evita evaluar como JS inválido). Binario ticket_foto (JPEG). Sub-nodo OpenAI: credencial válida, modelo gpt-4o recomendado para OCR de imágenes; si falla, revisá cuota y mensaje exacto en el nodo OpenAI."
+      "notes": "Arma el prompt de texto; la imagen la envía el nodo OpenAI Analyze (binario ticket_foto)."
     },
     {
       "parameters": {
-        "model": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
           "__rl": true,
           "mode": "list",
           "value": "gpt-4o"
         },
+        "text": "={{ $json.ocr_compliance_prompt }}",
+        "inputType": "base64",
+        "binaryPropertyName": "ticket_foto",
+        "simplify": true,
         "options": {
-          "temperature": 0.1
+          "detail": "high",
+          "maxTokens": 2000
         }
       },
-      "id": "openai-chat-model",
-      "name": "OpenAI Chat Model",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "typeVersion": 1.2,
+      "id": "openai-vision-ocr-compliance",
+      "name": "OpenAI — OCR + Compliance (visión)",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
       "position": [
-        1520,
-        640
+        1760,
+        480
       ],
       "notesInFlow": true,
-      "notes": "n8n ≥2.8: typeVersion 1.2+ exige model como lista (resource locator) con .value, no string suelto; si no, error 'Could not get parameter' al leer model.value."
+      "notes": "Misma credencial OpenAI que Whisper. Resource Image → Analyze; binario ticket_foto. Salida simplificada con content (JSON como texto)."
     },
     {
       "parameters": {
@@ -350,29 +433,45 @@
         }
       },
       "id": "merge-drive-y-ocr",
-      "name": "Merge — Drive + OCR",
+      "name": "Merge — Drive + Compliance",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        1760,
+        2440,
         300
       ]
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const merged = $input.item.json;\nconst idx = $itemIndex;\nconst base = $('Code — Expandir Tickets').all()[idx].json;\n\nconst ocrRaw = merged.output ?? merged.text ?? '';\nlet ocr = { monto_total: null, moneda: '', fecha_factura: null, CUIT_proveedor: null };\ntry {\n  const m = String(ocrRaw).match(/\\{[\\s\\S]*\\}/);\n  if (m) ocr = { ...ocr, ...JSON.parse(m[0]) };\n} catch (e) {}\n\nfunction normalizeAmount(v) {\n  if (v === null || v === undefined) return null;\n  if (typeof v === 'number') return Number.isFinite(v) ? v : null;\n\n  const s = String(v).trim();\n  if (!s) return null;\n\n  // Keep digits, dot, comma and minus. (Removes currency symbols and spaces.)\n  let cleaned = s.replace(/[^\\d,\\.\\-]/g, '');\n\n  // If both separators exist, assume dot = thousands and comma = decimal.\n  if (cleaned.includes(',') && cleaned.includes('.')) {\n    cleaned = cleaned.replace(/\\./g, '').replace(',', '.');\n  } else if (cleaned.includes(',')) {\n    // If only comma exists, assume it's the decimal separator.\n    cleaned = cleaned.replace(',', '.');\n  }\n\n  const n = parseFloat(cleaned);\n  return Number.isFinite(n) ? n : null;\n}\n\nfunction normalizeCuit(v) {\n  if (v === null || v === undefined) return '';\n  const s = String(v).replace(/[^\\d]/g, '');\n  return s || '';\n}\n\nconst link = merged.webViewLink || merged.webContentLink || '';\nconst idFoto = merged.id || merged.fileId || '';\nconst monto = normalizeAmount(ocr.monto_total);\n\nreturn {\n  json: {\n    ...base,\n    id_foto_drive: idFoto,\n    link_foto_drive: link,\n    fecha_ticket_ia: ocr.fecha_factura || '',\n    monto_total_ia: monto === null ? '' : monto,\n    moneda_ia: ocr.moneda || '',\n    cuit_proveedor_ia: normalizeCuit(ocr.CUIT_proveedor)\n  }\n};"
+        "jsCode": "const idx = $itemIndex;\nconst base = $('Code — Expandir Tickets').all()[idx].json;\nconst driveJ = $('Drive — Subir foto').all()[idx]?.json || {};\nconst visionJ = $('OpenAI — OCR + Compliance (visión)').all()[idx]?.json || {};\n\nfunction coerceLlmText(m) {\n  if (m == null) return '';\n  if (typeof m === 'string') return m;\n  let t = m.content ?? m.text ?? m.output ?? m.response;\n  if (t && typeof t === 'object') {\n    t = t.text ?? t.output ?? t.message?.content ?? t.content ?? (Array.isArray(t.generations) ? String(t.generations[0]?.[0]?.text ?? '') : JSON.stringify(t));\n  }\n  return String(t ?? '');\n}\n\nfunction parseComplianceJson(raw) {\n  let s = String(raw || '').trim();\n  s = s.replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/i, '').trim();\n  if (!s) return null;\n  try {\n    return JSON.parse(s);\n  } catch (e1) {\n    try {\n      const i = s.indexOf('{');\n      const j = s.lastIndexOf('}');\n      if (i >= 0 && j > i) return JSON.parse(s.slice(i, j + 1));\n    } catch (e2) {}\n  }\n  try {\n    const m = s.match(/\\{[\\s\\S]*\\}/);\n    if (m) return JSON.parse(m[0]);\n  } catch (e3) {}\n  return null;\n}\n\nfunction normalizeKeys(o) {\n  if (!o || typeof o !== 'object') return {};\n  const out = { ...o };\n  if (out.monto_total == null && out.montoTotal != null) out.monto_total = out.montoTotal;\n  if (out.fecha_factura == null && out.fechaFactura != null) out.fecha_factura = out.fechaFactura;\n  if (out.CUIT_proveedor == null && out.cuit_proveedor != null) out.CUIT_proveedor = out.cuit_proveedor;\n  if (out.Compliance_Score == null && out.compliance_score != null) out.Compliance_Score = out.compliance_score;\n  return out;\n}\n\nconst parsed = parseComplianceJson(coerceLlmText(visionJ));\nlet ocr = normalizeKeys(parsed) || {};\nocr = {\n  monto_total: null,\n  moneda: '',\n  fecha_factura: null,\n  CUIT_proveedor: null,\n  Compliance_Score: 0.5,\n  compliance_observaciones: '',\n  violaciones: [],\n  parser_engine: 'openai_vision',\n  ...ocr\n};\n\nconst pe = 'openai_vision';\n\nfunction normalizeAmount(v) {\n  if (v === null || v === undefined) return null;\n  if (typeof v === 'number') return Number.isFinite(v) ? v : null;\n\n  const s = String(v).trim();\n  if (!s) return null;\n\n  let cleaned = s.replace(/[^\\d,\\.\\-]/g, '');\n\n  if (cleaned.includes(',') && cleaned.includes('.')) {\n    cleaned = cleaned.replace(/\\./g, '').replace(',', '.');\n  } else if (cleaned.includes(',')) {\n    cleaned = cleaned.replace(',', '.');\n  }\n\n  const n = parseFloat(cleaned);\n  return Number.isFinite(n) ? n : null;\n}\n\nfunction normalizeCuit(v) {\n  if (v === null || v === undefined) return '';\n  const s = String(v).replace(/[^\\d]/g, '');\n  return s || '';\n}\n\nlet score = Number(ocr.Compliance_Score);\nif (!Number.isFinite(score)) score = 0.5;\nscore = Math.round(Math.min(1, Math.max(0, score)) * 1000) / 1000;\n\nconst link = driveJ.webViewLink || driveJ.webContentLink || '';\nconst idFoto = driveJ.id || driveJ.fileId || '';\nconst monto = normalizeAmount(ocr.monto_total);\n\nconst estado = score < 0.7 ? 'Requiere Revisión Manual' : 'Pendiente';\n\nreturn {\n  json: {\n    ...base,\n    id_foto_drive: idFoto,\n    link_foto_drive: link,\n    fecha_ticket_ia: ocr.fecha_factura || '',\n    monto_total_ia: monto === null ? '' : monto,\n    moneda_ia: ocr.moneda || '',\n    cuit_proveedor_ia: normalizeCuit(ocr.CUIT_proveedor),\n    Compliance_Score: score,\n    Estado: estado,\n    estado_compliance_obs: String(ocr.compliance_observaciones || '').slice(0, 2000),\n    violaciones_compliance: Array.isArray(ocr.violaciones) ? ocr.violaciones.join('; ') : '',\n    parser_engine: pe\n  }\n};"
       },
       "id": "code-unir-fila-sheet",
       "name": "Code — Unir fila Sheet",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2000,
+        2660,
         300
       ],
       "notesInFlow": true,
-      "notes": "link_foto_drive e id_foto_drive salen del nodo Drive — Subir foto (merge posición 0); OCR solo aporta campos de texto."
+      "notes": "Tras Merge: lee Drive y OpenAI visión por $itemIndex. OCR + compliance en un paso sobre la imagen (gpt-4o)."
+    },
+    {
+      "parameters": {
+        "color": 4,
+        "content": "## Flujo lectura\\nOpenAI visión (gpt-4o) sobre la foto del comprobante: OCR + JSON de compliance en un nodo. Whisper alimenta el prompt si hubo audio.",
+        "height": 200,
+        "width": 380
+      },
+      "id": "sticky-nota-vector-store",
+      "name": "Nota — Compliance en prompt",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2140,
+        80
+      ]
     },
     {
       "parameters": {
@@ -402,7 +501,11 @@
             "Monto_Factura_IA": "={{ $json.monto_total_ia }}",
             "Moneda_Factura_IA": "={{ $json.moneda_ia }}",
             "CUIT_Proveedor_IA": "={{ $json.cuit_proveedor_ia }}",
-            "Estado": "Pendiente",
+            "Compliance_Score": "={{ $json.Compliance_Score }}",
+            "Comentario_Voz": "={{ $json.explicacion_audio_transcrita }}",
+            "Motor_Parseo": "={{ $json.parser_engine }}",
+            "Observaciones_Compliance": "={{ $json.estado_compliance_obs }}",
+            "Estado": "={{ $json.Estado }}",
             "Fecha_Resolucion": ""
           }
         },
@@ -420,7 +523,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const all = $input.all();\nconst j0 = all[0].json;\nconst ids = all.map(i => i.json.id_rendicion);\nconst monto_total = all.map(i => {\n  const r = i.json;\n  const parts = [r.monto_total_ia, r.moneda_ia].filter((v) => v !== null && v !== undefined && v !== '');\n  return parts.join(' ').trim();\n}).filter(Boolean).join(' · ') || '';\nconst link_foto_drive = j0.link_foto_drive || (all[0] && all[0].json.link_foto_drive) || '';\nfunction ensureWebhookSuffix(resumeUrl, suffix) {\n  if (!resumeUrl || !suffix) return resumeUrl;\n  const s = String(suffix).replace(/^\\/+|\\/+$/g, '');\n  if (resumeUrl.includes('/' + s + '?') || resumeUrl.includes('/' + s + '&') || resumeUrl.endsWith('/' + s)) return resumeUrl;\n  const q = resumeUrl.indexOf('?');\n  if (q === -1) return resumeUrl + '/' + s;\n  return resumeUrl.slice(0, q) + '/' + s + resumeUrl.slice(q);\n}\nfunction appendDecision(resumeUrl, decision) {\n  if (!resumeUrl) return '';\n  const sep = resumeUrl.includes('?') ? '&' : '?';\n  return resumeUrl + sep + 'decision=' + encodeURIComponent(decision);\n}\nconst cfg = $('Variables — Config').first().json || {};\nconst waitSuffix = cfg.wait_webhook_suffix || 'aprobacion-gerente';\nconst ru = ensureWebhookSuffix($execution.resumeUrl || '', waitSuffix);\nreturn [{\n  json: {\n    batch_id: j0.batch_id,\n    id_rendiciones: ids,\n    emp_nombre: j0.emp_nombre,\n    emp_legajo: j0.emp_legajo,\n    motivo_rendicion: j0.motivo_rendicion,\n    fecha_envio: j0.fecha_envio,\n    resumen_html: all.map(i => {\n      const r = i.json;\n      return `<li><strong>${r.ticket_categoria || ''}</strong> — ${r.monto_total_ia ?? ''} ${r.moneda_ia || ''} — <a href=\"${r.link_foto_drive || ''}\" target=\"_blank\">Foto Drive</a></li>`;\n    }).join(''),\n    link_primera_foto: link_foto_drive,\n    link_foto_drive,\n    monto_total,\n    fecha_ticket_ia: j0.fecha_ticket_ia || '',\n    cuit_proveedor_ia: j0.cuit_proveedor_ia || '',\n    repo: 'https://github.com/jugauna/rendicion_de_gastos.git',\n    resume_url_aprobar: appendDecision(ru, 'aprobar'),\n    resume_url_rechazar: appendDecision(ru, 'rechazar')\n  }\n}];"
+        "jsCode": "const all = $input.all();\nconst j0 = all[0].json;\nconst ids = all.map(i => i.json.id_rendicion);\nconst monto_total = all.map(i => {\n  const r = i.json;\n  const parts = [r.monto_total_ia, r.moneda_ia].filter((v) => v !== null && v !== undefined && v !== '');\n  return parts.join(' ').trim();\n}).filter(Boolean).join(' · ') || '';\nconst link_foto_drive = j0.link_foto_drive || (all[0] && all[0].json.link_foto_drive) || '';\nconst scoreNums = all.map((i) => Number(i.json.Compliance_Score)).filter((n) => Number.isFinite(n));\nconst batch_compliance_avg = scoreNums.length ? Math.round((scoreNums.reduce((a, b) => a + b, 0) / scoreNums.length) * 1000) / 1000 : '';\nconst batch_parser_engines = [...new Set(all.map((i) => String(i.json.parser_engine || '').trim()).filter(Boolean))].join('+') || '';\nfunction ensureWebhookSuffix(resumeUrl, suffix) {\n  if (!resumeUrl || !suffix) return resumeUrl;\n  const s = String(suffix).replace(/^\\/+|\\/+$/g, '');\n  if (resumeUrl.includes('/' + s + '?') || resumeUrl.includes('/' + s + '&') || resumeUrl.endsWith('/' + s)) return resumeUrl;\n  const q = resumeUrl.indexOf('?');\n  if (q === -1) return resumeUrl + '/' + s;\n  return resumeUrl.slice(0, q) + '/' + s + resumeUrl.slice(q);\n}\nfunction appendDecision(resumeUrl, decision) {\n  if (!resumeUrl) return '';\n  const sep = resumeUrl.includes('?') ? '&' : '?';\n  return resumeUrl + sep + 'decision=' + encodeURIComponent(decision);\n}\nconst cfg = $('Variables — Config').first().json || {};\nconst waitSuffix = cfg.wait_webhook_suffix || 'aprobacion-gerente';\nconst ru = ensureWebhookSuffix($execution.resumeUrl || '', waitSuffix);\nreturn [{\n  json: {\n    batch_id: j0.batch_id,\n    id_rendiciones: ids,\n    emp_nombre: j0.emp_nombre,\n    emp_legajo: j0.emp_legajo,\n    motivo_rendicion: j0.motivo_rendicion,\n    fecha_envio: j0.fecha_envio,\n    resumen_html: all.map(i => {\n      const r = i.json;\n      return `<li><strong>${r.ticket_categoria || ''}</strong> — ${r.monto_total_ia ?? ''} ${r.moneda_ia || ''} — <a href=\"${r.link_foto_drive || ''}\" target=\"_blank\">Foto Drive</a></li>`;\n    }).join(''),\n    link_primera_foto: link_foto_drive,\n    link_foto_drive,\n    monto_total,\n    fecha_ticket_ia: j0.fecha_ticket_ia || '',\n    cuit_proveedor_ia: j0.cuit_proveedor_ia || '',\n    repo: 'https://github.com/jugauna/rendicion_de_gastos.git',\n    resume_url_aprobar: appendDecision(ru, 'aprobar'),\n    resume_url_rechazar: appendDecision(ru, 'rechazar'),\n    compliance_score: j0.Compliance_Score ?? '',\n    estado_compliance: j0.Estado || '',\n    batch_compliance_avg,\n    batch_parser_engines\n  }\n}];"
       },
       "id": "code-aggregate-batch",
       "name": "Code — Batch email",
@@ -479,7 +582,7 @@
           "conditions": [
             {
               "id": "dec-aprob",
-              "leftValue": "={{ $json.query?.decision || $json.body?.decision || $json.decision || '' }}",
+              "leftValue": "={{ (() => { const w = $json || {}; const q = w.query || w.params || {}; let r = q.decision ?? q.Decision; if (r == null && w.body && typeof w.body === 'object') r = w.body.decision; if (r == null) r = w.decision; return String(r ?? '').trim().toLowerCase(); })() }}",
               "rightValue": "aprobar",
               "operator": {
                 "type": "string",
@@ -503,7 +606,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const prev = $('Code — Batch email').first().json;\nconst ids = prev.id_rendiciones || [];\nconst webhook = $input.first().json;\nconst decision = webhook.query?.decision || webhook.body?.decision || webhook.decision || '';\nconst aprobada = decision === 'aprobar';\nconst estado = aprobada ? 'Aprobada' : 'Rechazada';\nconst fecha = new Date().toISOString();\nreturn ids.map((id) => ({ json: { id_rendicion: id, Estado: estado, Fecha_Resolucion: fecha } }));"
+        "jsCode": "const prev = $('Code — Batch email').first().json;\nconst ids = prev.id_rendiciones || [];\nconst w = $input.first().json || {};\nconst q = w.query || w.params || {};\nlet raw = q.decision ?? q.Decision;\nif (raw == null && w.body && typeof w.body === 'object' && !Array.isArray(w.body)) raw = w.body.decision ?? w.body.Decision;\nif (raw == null && typeof w.body === 'string') {\n  try { const b = JSON.parse(w.body); raw = b?.decision ?? b?.Decision; } catch (e) {}\n}\nif (raw == null) raw = w.decision ?? w.Decision;\nif (Array.isArray(raw)) raw = raw[raw.length - 1];\nconst d = String(raw ?? '').trim().toLowerCase();\nconst aprobada = raw === true || d === 'aprobar' || d === 'approve' || d === 'si' || d === 'sí' || d === 'yes';\nconst estado = aprobada ? 'Aprobada' : 'Rechazada';\nconst fecha = new Date().toISOString();\nreturn ids.map((id) => ({ json: { id_rendicion: id, Estado: estado, Fecha_Resolucion: fecha } }));"
       },
       "id": "code-split-updates",
       "name": "Code — Filas a actualizar",
@@ -546,20 +649,21 @@
       "name": "Sheets — Update por id_rendicion",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
+      "alwaysOutputData": true,
       "position": [
         3680,
         300
       ],
       "notesInFlow": true,
-      "notes": "Update por fila: columna de coincidencia = id_rendicion (mismo encabezado que en la hoja). Valor = $json.id_rendicion."
+      "notes": "Update por fila: id_rendicion. alwaysOutputData: el nodo siguiente (mail contable) corre aunque Sheets devuelva 0 ítems (evita perder el correo al rechazar)."
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const rows = $input.all();\nif (!rows.length) return [];\nconst estado = rows[0].json.Estado;\nif (estado === 'Aprobada') {\n  return [{ json: { _notificar_contable: true } }];\n}\nreturn [];"
+        "jsCode": "const fila = $('Code — Filas a actualizar').first();\nconst estado = (fila && fila.json && fila.json.Estado) ? String(fila.json.Estado) : '';\nreturn [{ json: { _notificar_contable: true, estado_resolucion: estado } }];"
       },
       "id": "code-solo-si-aprobada",
-      "name": "Code — Notificar contable (solo aprobada)",
+      "name": "Code — Notificar contable",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -605,9 +709,9 @@
         "operation": "send",
         "fromEmail": "={{ $('Variables — Config').first().json.email_from }}",
         "toEmail": "={{ $('Variables — Config').first().json.email_jefe_contable }}",
-        "subject": "={{ 'Rendición APROBADA — ' + ($('Code — Batch email').first().json.emp_legajo || '') }}",
+        "subject": "={{ 'Rendición ' + ($('Code — Notificar contable').first().json.estado_resolucion || $('Code — Filas a actualizar').first().json.Estado || '') + ' — ' + ($('Code — Batch email').first().json.emp_legajo || '') }}",
         "emailFormat": "html",
-        "html": "={{ '<p>La rendición fue <strong>aprobada</strong> por el gerente.</p><p>Batch: ' + ($('Code — Batch email').first().json.batch_id || '') + '</p><p>IDs: ' + ($('Code — Batch email').first().json.id_rendiciones || []).join(', ') + '</p><p>Repo: https://github.com/jugauna/rendicion_de_gastos.git</p>' }}",
+        "html": "={{ (() => {\n  const est = String($('Code — Notificar contable').first().json.estado_resolucion || $('Code — Filas a actualizar').first().json.Estado || '');\n  const b = $('Code — Batch email').first().json || {};\n  const legajo = b.emp_legajo || '';\n  const nombre = b.emp_nombre || '';\n  const motivo = b.motivo_rendicion || '';\n  const ids = (b.id_rendiciones || []).join(', ');\n  const batch = b.batch_id || '';\n  let adj = 'resuelta';\n  if (est === 'Aprobada') adj = '<strong style=\"color:#16a34a\">aprobada</strong>';\n  else if (est === 'Rechazada') adj = '<strong style=\"color:#dc2626\">rechazada</strong>';\n  else adj = '<strong>' + est + '</strong>';\n  return '<p>El gerente indicó que la rendición fue ' + adj + '.</p>' +\n    '<p><strong>Empleado:</strong> ' + nombre + ' (' + legajo + ')<br/>' +\n    '<strong>Motivo:</strong> ' + motivo + '</p>' +\n    '<p><strong>Batch:</strong> ' + batch + '</p>' +\n    '<p><strong>IDs:</strong> ' + ids + '</p>' +\n    '<p>Repo: https://github.com/jugauna/rendicion_de_gastos.git</p>';\n})() }}",
         "options": {}
       },
       "id": "email-contable",
@@ -618,6 +722,64 @@
         3900,
         180
       ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const fila = $('Code — Filas a actualizar').first()?.json || {};\nconst batch = $('Code — Batch email').first()?.json || {};\nconst estado = String(fila.Estado || $('Code — Notificar contable').first()?.json?.estado_resolucion || '');\nconst ids = Array.isArray(batch.id_rendiciones) ? batch.id_rendiciones.join(', ') : String(fila.id_rendicion || '');\nconst detail = ['estado=' + estado, batch.batch_id ? 'batch=' + batch.batch_id : '', ids ? 'ids=' + ids : '', batch.batch_compliance_avg !== '' && batch.batch_compliance_avg != null ? 'avgCompliance=' + batch.batch_compliance_avg : '', batch.batch_parser_engines ? 'parsers=' + batch.batch_parser_engines : ''].filter(Boolean).join(' | ');\nreturn [{\n  json: {\n    Timestamp: new Date().toISOString(),\n    Outcome: 'OK',\n    Workflow_Name: String($workflow.name || ''),\n    Execution_Id: String($execution.id || ''),\n    Last_Node: 'Fin aprobación gerente → contable',\n    Detail: detail.slice(0, 2000),\n    Compliance_Score_Batch: String(batch.batch_compliance_avg ?? ''),\n    Parser_Engine_Summary: String(batch.batch_parser_engines ?? ''),\n    Error_Message: '',\n    Error_Stack: '',\n    Execution_Url: String($execution.resumeUrl || '')\n  }\n}];"
+      },
+      "id": "code-audit-log-ok",
+      "name": "Code — Audit log OK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        240
+      ],
+      "notesInFlow": true,
+      "notes": "Append a Audit_Logs con Outcome=OK al cerrar el ciclo gerente (misma fila de columnas que el workflow de errores)."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1u30U7L8RzrAuj2F9Y9NYe3ke75DdFNtKp7N_gy44e2Y"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Audit_Logs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.Timestamp }}",
+            "Outcome": "={{ $json.Outcome }}",
+            "Workflow_Name": "={{ $json.Workflow_Name }}",
+            "Execution_Id": "={{ $json.Execution_Id }}",
+            "Last_Node": "={{ $json.Last_Node }}",
+            "Detail": "={{ $json.Detail }}",
+            "Compliance_Score_Batch": "={{ $json.Compliance_Score_Batch }}",
+            "Parser_Engine_Summary": "={{ $json.Parser_Engine_Summary }}",
+            "Error_Message": "={{ $json.Error_Message }}",
+            "Error_Stack": "={{ $json.Error_Stack }}",
+            "Execution_Url": "={{ $json.Execution_Url }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-append-audit-ok",
+      "name": "Sheets — Append Audit_Logs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4680,
+        240
+      ],
+      "notesInFlow": true,
+      "notes": "Mismo spreadsheet que Variables — Config (google_sheet_id). Encabezados idénticos al workflow Audit — Error logs."
     },
     {
       "parameters": {
@@ -650,6 +812,57 @@
       ]
     },
     "Variables — Config": {
+      "main": [
+        [
+          {
+            "node": "IF — ¿Audio explicación?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — ¿Audio explicación?": {
+      "main": [
+        [
+          {
+            "node": "OpenAI — Whisper (transcribe)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code — Sin audio (passthrough)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI — Whisper (transcribe)": {
+      "main": [
+        [
+          {
+            "node": "Code — Merge transcripción en body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Merge transcripción en body": {
+      "main": [
+        [
+          {
+            "node": "IF Secret Válido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Sin audio (passthrough)": {
       "main": [
         [
           {
@@ -787,9 +1000,31 @@
             "index": 0
           },
           {
-            "node": "AI Agent — OCR (JPG)",
+            "node": "Code — Prompt OCR + Compliance (visión)",
             "type": "main",
             "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Prompt OCR + Compliance (visión)": {
+      "main": [
+        [
+          {
+            "node": "OpenAI — OCR + Compliance (visión)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI — OCR + Compliance (visión)": {
+      "main": [
+        [
+          {
+            "node": "Merge — Drive + Compliance",
+            "type": "main",
+            "index": 1
           }
         ]
       ]
@@ -798,36 +1033,14 @@
       "main": [
         [
           {
-            "node": "Merge — Drive + OCR",
+            "node": "Merge — Drive + Compliance",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "AI Agent — OCR (JPG)": {
-      "main": [
-        [
-          {
-            "node": "Merge — Drive + OCR",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "OpenAI Chat Model": {
-      "ai_languageModel": [
-        [
-          {
-            "node": "AI Agent — OCR (JPG)",
-            "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Merge — Drive + OCR": {
+    "Merge — Drive + Compliance": {
       "main": [
         [
           {
@@ -925,14 +1138,14 @@
       "main": [
         [
           {
-            "node": "Code — Notificar contable (solo aprobada)",
+            "node": "Code — Notificar contable",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Code — Notificar contable (solo aprobada)": {
+    "Code — Notificar contable": {
       "main": [
         [
           {
@@ -952,7 +1165,35 @@
             "index": 0
           }
         ],
-        []
+        [
+          {
+            "node": "Code — Audit log OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email — Jefe Contable": {
+      "main": [
+        [
+          {
+            "node": "Code — Audit log OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Audit log OK": {
+      "main": [
+        [
+          {
+            "node": "Sheets — Append Audit_Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   }

@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!--
+      PROXY: subí proxy-n8n.php a la RAÍZ del sitio WordPress (public_html), NO al subdominio srv848-files
+      (ahí suele dar 403 OpenResty porque no ejecuta PHP). URL = misma que PROXY_URL abajo.
+    -->
+    <!-- Multimodal: varios bloques de comprobante (ticket_foto_1..N) + audio opcional explicacion_audio → proxy POST multipart + X-N8N-SECRET -->
     <title>Rendición de Gastos y Viáticos - Empresa S.A.</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
@@ -50,6 +55,45 @@
 
         .btn-eliminar { background: #fff1f1; border: 1px solid #fecaca; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
 
+        .audio-voz-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+        .btn-mic { padding: 12px 18px; border-radius: 8px; border: 2px solid var(--verde-dinero); background: #fff; color: var(--verde-dinero); font-weight: 700; cursor: pointer; font-size: 14px; }
+        .btn-mic:hover { background: #f0fdf4; }
+        .btn-mic.recording { background: #fef2f2; border-color: #dc2626; color: #dc2626; animation: pulse-mic 1.2s ease-in-out infinite; }
+        @keyframes pulse-mic { 50% { opacity: 0.85; } }
+        .btn-mic-stop { padding: 12px 18px; border-radius: 8px; border: none; background: #dc2626; color: #fff; font-weight: 700; cursor: pointer; }
+        .btn-mic-stop:disabled { opacity: 0.5; cursor: not-allowed; }
+        .audio-voz-estado { font-size: 13px; color: #64748b; flex: 1; min-width: 200px; }
+
+        .archivo-elegido-row {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+            padding: 10px 12px;
+            background: #f8fafc;
+            border: 1px solid var(--borde);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .archivo-elegido-row.visible { display: flex; }
+        .archivo-nombre { color: var(--azul-empresa); font-weight: 500; word-break: break-all; flex: 1; min-width: 0; }
+        .btn-quitar-archivo {
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border: none;
+            border-radius: 8px;
+            background: #fee2e2;
+            color: #b91c1c;
+            font-size: 20px;
+            line-height: 1;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .btn-quitar-archivo:hover { background: #fecaca; }
+
         @media (min-width: 600px) {
             .grid-cabecera { grid-template-columns: 2fr 1fr 2fr; gap: 20px; }
             .footer-actions { flex-direction: row; justify-content: space-between; }
@@ -90,7 +134,22 @@
                 </div>
                 <div class="hs-seccion">
                     <label class="hs-pregunta">Motivo de la Rendición*</label>
-                    <input type="text" name="rendicion_motivo" placeholder="Ej: Viaje a Neuquén - Cliente YPF" required>
+                    <input type="text" name="rendicion_motivo" placeholder="Ej: Viaje a Neuquén" required>
+                </div>
+            </div>
+            <div class="hs-seccion" style="margin-top:12px">
+                <label class="hs-pregunta">Explicación por voz (opcional)</label>
+                <p style="font-size:13px;color:#64748b;margin:0 0 8px 0"><strong>Recomendado:</strong> usá <strong>«Grabar solo voz»</strong> (solo micrófono, sin cámara). O adjuntá un audio desde la app <em>Memos de voz</em> / archivos (solo formatos de audio, máx. ~25&nbsp;MB).</p>
+                <div class="audio-voz-row">
+                    <button type="button" class="btn-mic" id="btnGrabarVoz" title="Solo micrófono">Grabar solo voz</button>
+                    <button type="button" class="btn-mic-stop" id="btnDetenerVoz" disabled>Detener</button>
+                    <span class="audio-voz-estado" id="audioVozEstado"></span>
+                </div>
+                <p style="font-size:12px;color:#94a3b8;margin:10px 0 6px 0">O elegí un archivo de audio ya guardado:</p>
+                <input type="file" id="inputExplicacionAudio" name="explicacion_audio" accept="audio/*,.webm,.mp3,.m4a,.ogg,.wav,.mpeg,.mpga">
+                <div class="archivo-elegido-row" id="filaArchivoAudio" aria-live="polite">
+                    <span class="archivo-nombre" id="nombreArchivoAudio"></span>
+                    <button type="button" class="btn-quitar-archivo" id="btnQuitarArchivoAudio" title="Quitar audio" aria-label="Quitar audio seleccionado">×</button>
                 </div>
             </div>
         </div>
@@ -107,9 +166,152 @@
 <script>
     const contenedor = document.getElementById('contenedor-tickets');
     let contador = 0;
-    
-    // !!! IMPORTANTE: APUNTA A TU PROXY PHP SEGURO !!!
-    const PROXY_URL = 'https://srv848-files.hstgr.io/b999178d16a41366/files/public_html/proxy-n8n.php'; 
+
+    /**
+     * PROXY en el MISMO dominio que el formulario (WordPress Hostinger → public_html/proxy-n8n.php).
+     * El subdominio *.hstgr.io de “files” suele devolver 403 y no ejecuta PHP.
+     */
+    const PROXY_URL = 'https://lavenderblush-squirrel-497123.hostingersite.com/proxy-n8n.php';
+
+    /** Nota grabada solo con micrófono (sin cámara) */
+    let notaVozBlob = null;
+    let notaVozMimeLabel = '';
+    let mediaRecorder = null;
+    let mediaChunks = [];
+    let grabacionStream = null;
+
+    function nombreArchivoNotaVoz(mime) {
+        const m = (mime || '').toLowerCase();
+        if (m.includes('webm')) return 'nota-voz.webm';
+        if (m.includes('mp4')) return 'nota-voz.mp4';
+        if (m.includes('mpeg')) return 'nota-voz.mp3';
+        return 'nota-voz.webm';
+    }
+
+    function refrescarFilaAudio() {
+        const fila = document.getElementById('filaArchivoAudio');
+        const span = document.getElementById('nombreArchivoAudio');
+        const inputA = document.getElementById('inputExplicacionAudio');
+        if (!fila || !span) return;
+        let nombre = '';
+        if (notaVozBlob && notaVozBlob.size) {
+            nombre = nombreArchivoNotaVoz(notaVozMimeLabel || notaVozBlob.type) + ' (nota grabada)';
+        } else if (inputA && inputA.files && inputA.files[0]) {
+            nombre = inputA.files[0].name;
+        }
+        span.textContent = nombre;
+        fila.classList.toggle('visible', Boolean(nombre));
+    }
+
+    function refrescarFilaFoto(input) {
+        const bloque = input && input.closest('.bloque-ticket');
+        if (!bloque) return;
+        const fila = bloque.querySelector('.fila-archivo-foto');
+        const span = fila && fila.querySelector('.archivo-nombre-foto');
+        if (!fila || !span) return;
+        if (input.files && input.files[0]) {
+            span.textContent = input.files[0].name;
+            fila.classList.add('visible');
+        } else {
+            span.textContent = '';
+            fila.classList.remove('visible');
+        }
+    }
+
+    function actualizarEstadoVoz(texto) {
+        const el = document.getElementById('audioVozEstado');
+        if (el) el.textContent = texto || '';
+    }
+
+    function puedeGrabarVozEnPagina() {
+        return typeof MediaRecorder !== 'undefined'
+            && navigator.mediaDevices
+            && typeof navigator.mediaDevices.getUserMedia === 'function';
+    }
+
+    function initGrabacionVoz() {
+        const btnG = document.getElementById('btnGrabarVoz');
+        const btnD = document.getElementById('btnDetenerVoz');
+        const inputA = document.getElementById('inputExplicacionAudio');
+        if (!btnG || !btnD) return;
+
+        if (!puedeGrabarVozEnPagina()) {
+            btnG.disabled = true;
+            actualizarEstadoVoz('Tu navegador no permite grabar aquí. Usá el selector de archivo con un memo de voz.');
+            return;
+        }
+
+        btnG.addEventListener('click', async () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') return;
+            try {
+                grabacionStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            } catch (err) {
+                alert('No se pudo usar el micrófono. Revisá permisos o adjuntá un audio con el campo de abajo.');
+                return;
+            }
+            notaVozBlob = null;
+            if (inputA) inputA.value = '';
+            refrescarFilaAudio();
+            mediaChunks = [];
+            let mimeType = '';
+            if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
+            else if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm';
+            else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
+            mediaRecorder = mimeType ? new MediaRecorder(grabacionStream, { mimeType }) : new MediaRecorder(grabacionStream);
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data && e.data.size) mediaChunks.push(e.data);
+            };
+            mediaRecorder.onstop = () => {
+                const t = mediaRecorder.mimeType || 'audio/webm';
+                notaVozBlob = new Blob(mediaChunks, { type: t });
+                notaVozMimeLabel = t;
+                if (grabacionStream) {
+                    grabacionStream.getTracks().forEach((tr) => tr.stop());
+                }
+                grabacionStream = null;
+                mediaRecorder = null;
+                btnG.classList.remove('recording');
+                btnG.disabled = false;
+                btnD.disabled = true;
+                actualizarEstadoVoz('Nota de voz lista (' + Math.round(notaVozBlob.size / 1024) + ' KB). Podés enviar o grabar de nuevo.');
+                refrescarFilaAudio();
+            };
+            mediaRecorder.start(200);
+            btnG.classList.add('recording');
+            btnG.disabled = true;
+            btnD.disabled = false;
+            actualizarEstadoVoz('Grabando… solo micrófono (sin cámara).');
+        });
+
+        btnD.addEventListener('click', () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+        });
+
+        if (inputA) {
+            inputA.addEventListener('change', () => {
+                notaVozBlob = null;
+                notaVozMimeLabel = '';
+                actualizarEstadoVoz('');
+                refrescarFilaAudio();
+            });
+        }
+
+        const btnQuitarAudio = document.getElementById('btnQuitarArchivoAudio');
+        if (btnQuitarAudio) {
+            btnQuitarAudio.addEventListener('click', () => {
+                limpiarNotaVozUi();
+            });
+        }
+    }
+
+    function limpiarNotaVozUi() {
+        notaVozBlob = null;
+        notaVozMimeLabel = '';
+        const inputA = document.getElementById('inputExplicacionAudio');
+        if (inputA) inputA.value = '';
+        actualizarEstadoVoz('');
+        refrescarFilaAudio();
+    }
 
     function mostrarToastExito(nombre) {
         const container = document.getElementById('toast-container');
@@ -204,7 +406,11 @@
 
             <div class="hs-seccion" style="margin-bottom:0">
                 <label class="hs-pregunta">Comprobante — imagen JPG*</label>
-                <input type="file" class="input-foto" name="ticket_foto_${contador}" accept="image/jpeg,.jpg,.jpeg" required>
+                <input type="file" class="input-foto" name="ticket_foto_${contador}" accept="image/jpeg,.jpg,.jpeg" required data-ticket-index="${contador}">
+                <div class="archivo-elegido-row fila-archivo-foto" aria-live="polite">
+                    <span class="archivo-nombre archivo-nombre-foto"></span>
+                    <button type="button" class="btn-quitar-archivo btn-quitar-foto" title="Quitar imagen" aria-label="Quitar imagen seleccionada">×</button>
+                </div>
             </div>
         `;
         contenedor.appendChild(div);
@@ -218,17 +424,66 @@
         }
     });
 
-    // Carga inicial
-    document.addEventListener('DOMContentLoaded', () => {
-        crearNuevoBloqueTicket(); // Agregar el primero por defecto
+    contenedor.addEventListener('change', (e) => {
+        if (e.target && e.target.classList.contains('input-foto')) {
+            refrescarFilaFoto(e.target);
+        }
     });
+
+    contenedor.addEventListener('click', (e) => {
+        if (e.target && e.target.classList.contains('btn-quitar-foto')) {
+            e.preventDefault();
+            const bloque = e.target.closest('.bloque-ticket');
+            const input = bloque && bloque.querySelector('.input-foto');
+            if (input) {
+                input.value = '';
+                refrescarFilaFoto(input);
+            }
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        crearNuevoBloqueTicket();
+        initGrabacionVoz();
+    });
+
+    function validarBloquesTickets() {
+        const bloques = document.querySelectorAll('.bloque-ticket');
+        const n = bloques.length;
+        if (n < 1) {
+            return { ok: false, mensaje: 'Debés agregar al menos un comprobante.' };
+        }
+        for (let i = 0; i < n; i++) {
+            const sel = bloques[i].querySelector('select[name^="ticket_categoria_"]');
+            const foto = bloques[i].querySelector('input.input-foto');
+            if (!sel || sel.value === '' || sel.value == null) {
+                return { ok: false, mensaje: `Seleccioná la categoría del comprobante #${i + 1}.` };
+            }
+            if (!foto || !foto.files || !foto.files[0]) {
+                return { ok: false, mensaje: `Adjuntá la imagen JPG del comprobante #${i + 1}.` };
+            }
+        }
+        return { ok: true, bloques, n };
+    }
 
     // --- ENVÍO PROFESIONAL CON COMPRESIÓN ORQUESTADA ---
     document.getElementById('formRendicionGastos').onsubmit = async function(e) {
         e.preventDefault();
         const btn = document.getElementById('btnSubmit');
         const empleadoNombre = document.getElementById('txtNombre').value;
-        
+
+        const validacion = validarBloquesTickets();
+        if (!validacion.ok) {
+            alert(validacion.mensaje);
+            return;
+        }
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            alert('Tocá «Detener» para finalizar la nota de voz antes de enviar.');
+            return;
+        }
+        const bloques = validacion.bloques;
+        const totalTickets = validacion.n;
+
         // UI State: Procesando
         btn.disabled = true; 
         btn.innerHTML = '<span style="display:flex; align-items:center; gap:8px;"><svg class="spinner" width="20" height="20" viewBox="0 0 50 50" style="animation: rotate 2s linear infinite;"><circle cx="25" cy="25" r="20" fill="none" stroke-width="5" stroke="#fff" stroke-dasharray="1, 150" stroke-dashoffset="0" style="stroke-linecap: round; animation: dash 1.5s ease-in-out infinite;"></circle></svg> PROCESANDO ARCHIVOS...</span>';
@@ -241,18 +496,62 @@
         formData.append('rendicion_motivo', document.getElementsByName('rendicion_motivo')[0].value);
         formData.append('fecha_envio', new Date().toISOString());
 
-        // 2. Procesar iterativamente los bloques de tickets
-        const bloques = document.querySelectorAll('.bloque-ticket');
-        const totalTickets = bloques.length;
-        formData.append('total_tickets_enviados', totalTickets);
+        // 2. total_tickets_enviados debe coincidir exactamente con la cantidad de bloques visibles (índices 0..n-1)
+        formData.append('total_tickets_enviados', String(totalTickets));
+        if (parseInt(String(totalTickets), 10) !== bloques.length) {
+            alert('Error interno: el total de tickets no coincide con los bloques del formulario.');
+            btn.disabled = false;
+            btn.innerText = 'Enviar Rendición';
+            return;
+        }
+
+        const audioInput = document.getElementById('inputExplicacionAudio');
+        const maxBytesAudio = 25 * 1024 * 1024;
+        if (notaVozBlob && notaVozBlob.size > 0) {
+            if (notaVozBlob.size > maxBytesAudio) {
+                alert('La nota de voz supera 25 MB. Grabá una más corta o enviá sin audio.');
+                btn.disabled = false;
+                btn.innerText = 'Enviar Rendición';
+                return;
+            }
+            const nombreGrab = nombreArchivoNotaVoz(notaVozMimeLabel || notaVozBlob.type);
+            formData.append('explicacion_audio', notaVozBlob, nombreGrab);
+        } else if (audioInput && audioInput.files && audioInput.files[0]) {
+            const af = audioInput.files[0];
+            if (af.size > maxBytesAudio) {
+                alert('El archivo de voz supera 25 MB (límite de transcripción). Elegí uno más corto o sin audio.');
+                btn.disabled = false;
+                btn.innerText = 'Enviar Rendición';
+                return;
+            }
+            if (af.size === 0) {
+                alert('El archivo de audio está vacío. Elegí otro o quitá el audio.');
+                btn.disabled = false;
+                btn.innerText = 'Enviar Rendición';
+                return;
+            }
+            const mimeLower = (af.type || '').toLowerCase();
+            let nombreAudio = af.name && af.name.trim() ? af.name.trim() : 'explicacion.webm';
+            if (mimeLower === 'video/quicktime' || /\.mov$/i.test(nombreAudio)) {
+                nombreAudio = 'explicacion.mp4';
+            } else if (!/\.(webm|mp3|m4a|mp4|ogg|wav|mpeg|mpga|mov)$/i.test(nombreAudio)) {
+                if (mimeLower.includes('mp4') || mimeLower.includes('mpeg')) nombreAudio = 'explicacion.mp4';
+                else if (mimeLower.includes('webm')) nombreAudio = 'explicacion.webm';
+                else if (mimeLower.includes('mpeg')) nombreAudio = 'explicacion.mp3';
+                else nombreAudio = 'explicacion.m4a';
+            }
+            formData.append('explicacion_audio', af, nombreAudio);
+        }
 
         for (let i = 0; i < totalTickets; i++) {
             // Obtenemos el ID real (el contador) del bloque actual
             const idReal = bloques[i].id.split('-')[1];
             
-            // Datos de texto del ticket
-            formData.append(`ticket_categoria_${i}`, bloques[i].querySelector('select').value);
-            formData.append(`ticket_obs_${i}`, bloques[i].querySelector('input[type="text"]').value);
+            // Datos de texto del ticket (índice i alineado con ticket_foto_i en n8n)
+            const selCat = bloques[i].querySelector('select[name^="ticket_categoria_"]');
+            const inpObs = bloques[i].querySelector('input[name^="ticket_obs_"]');
+            formData.append(`ticket_categoria_${i}`, selCat ? selCat.value : '');
+            formData.append(`ticket_obs_${i}`, inpObs ? inpObs.value : '');
             
             // Comprobante: imagen comprimida a JPEG
             const inputFoto = bloques[i].querySelector('input[type="file"]');
@@ -278,22 +577,32 @@
         try {
             const resp = await fetch(PROXY_URL, {
                 method: 'POST',
+                mode: 'cors',
+                cache: 'no-store',
+                credentials: 'omit',
                 body: formData
-                // No seteamos Content-Type, fetch lo hace automático con la boundary correcta para FormData
             });
 
             if (resp.ok) {
                 mostrarToastExito(empleadoNombre);
-                this.reset(); // Limpiar formulario
-                contenedor.innerHTML = ''; contador = 0; // Resetear bloques dinámicos
-                crearNuevoBloqueTicket(); // Dejar uno vacío
+                this.reset();
+                limpiarNotaVozUi();
+                contenedor.innerHTML = ''; contador = 0;
+                crearNuevoBloqueTicket();
             } else {
                 const errData = await resp.text();
                 alert('Error en el servidor: ' + errData);
             }
         } catch (err) {
             console.error('Error de red:', err);
-            alert('Error de conexión. Verifique su internet.');
+            const detalle = err && err.message ? err.message : String(err);
+            alert(
+                'No se pudo completar el envío (no siempre es falta de internet).\n\n' +
+                'Proxy usado:\n' + PROXY_URL + '\n\n' +
+                '• Comprobá en el navegador que esa URL abre el PHP (o da error de método GET, no 404).\n' +
+                '• Subí proxy-n8n.php con CORS y el mismo path que arriba.\n' +
+                '• Detalle: ' + detalle
+            );
         } finally {
             // UI State: Reset
             btn.disabled = false; 
