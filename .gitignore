@@ -1,2 +1,5 @@
 # Comprobantes locales de prueba (no subir al remoto)
 Comprobantes/
+
+# Bloqueo temporal de Microsoft Office al abrir .docx
+~$*.docx
