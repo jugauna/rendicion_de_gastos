@@ -1,8 +1,8 @@
 {
-  "name": "Rendición de Gastos — Drive + IA + Sheets + Aprobación",
+  "name": "Rendición de Gastos v2.0 — Drive + IA + RAG Ética + Sheets + Aprobación",
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "App v1.0 | Repo: https://github.com/jugauna/rendicion_de_gastos.git | IA: OpenAI Whisper (audio opcional) + OpenAI visión (gpt-4o) sobre la imagen del comprobante: OCR y compliance en un solo paso. Google Drive + Sheets + mail gerente/contable + Wait webhook + Audit_Logs. X-N8N-SECRET / IF Secret; credenciales OpenAI y Google en n8n.",
+    "description": "App v2.0 | Repo: https://github.com/jugauna/rendicion_de_gastos.git | IA: Whisper (audio) + visión gpt-4o (OCR) + RAG Manual de Ética (Vector Store in-memory + Question and Answer Chain) con Compliance_Score combinado. Drive + Sheets + mail gerente/contable + Wait + Audit_Logs.",
     "instanceId": "rendicion-de-gastos-local"
   },
   "settings": {
@@ -30,7 +30,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const item = $input.first();\nreturn [{\n  json: {\n    ...item.json,\n    drive_parent_folder_id: '1K-PsrXneVL5JE3qeG0CWBwGfaKPzj45a',\n    google_sheet_id: '1u30U7L8RzrAuj2F9Y9NYe3ke75DdFNtKp7N_gy44e2Y',\n    email_from: 'juan.gauna@remasa.com',\n    email_gerente: 'juan.gauna@remasa.com',\n    email_jefe_contable: 'jugauna@gmail.com',\n    wait_webhook_suffix: 'aprobacion-gerente',\n    webhook_secret_provisorio: 'Hs_Inspeccion_2026_Secure_Alpha_99'\n  },\n  binary: item.binary || {}\n}];"
+        "jsCode": "const item = $input.first();\nreturn [{\n  json: {\n    ...item.json,\n    drive_parent_folder_id: '1K-PsrXneVL5JE3qeG0CWBwGfaKPzj45a',\n    google_sheet_id: '1u30U7L8RzrAuj2F9Y9NYe3ke75DdFNtKp7N_gy44e2Y',\n    email_from: 'juan.gauna@remasa.com',\n    email_gerente: 'juan.gauna@remasa.com',\n    email_jefe_contable: 'jugauna@gmail.com',\n    wait_webhook_suffix: 'aprobacion-gerente',\n    manual_etica_id: 'i_9W3xcU5u5MWkLF7g6F_VACbMUowaHcY1HbTtofnx4',\n    webhook_secret_provisorio: 'Hs_Inspeccion_2026_Secure_Alpha_99'\n  },\n  binary: item.binary || {}\n}];"
       },
       "id": "variables-config",
       "name": "Variables — Config",
@@ -177,7 +177,183 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const item = $input.first();\nconst b = item.json.body || item.json;\nconst total = parseInt(String(b.total_tickets_enviados ?? '0'), 10) || 0;\nconst batch_id = `RND-${Date.now()}-${String(b.emp_legajo || 'X').replace(/[^a-zA-Z0-9_-]/g, '')}`;\nconst fechaEnvio = b.fecha_envio || new Date().toISOString();\nconst safeLegajo = String(b.emp_legajo || 'LEG').replace(/[^a-zA-Z0-9_-]/g, '_');\nconst safeNombre = String(b.emp_nombre || 'Nombre').replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ _-]/g, '').trim().replace(/\\s+/g, '_');\nconst folder_safe_name = `${safeLegajo}_${safeNombre}`;\nconst parentId = item.json.drive_parent_folder_id;\nif (!parentId) throw new Error('Completá drive_parent_folder_id en el nodo Variables — Config (carpeta raíz Rendiciones en Drive).');\nconst out = [];\nfor (let i = 0; i < total; i++) {\n  const key = `ticket_foto_${i}`;\n  const bin = item.binary?.[key];\n  out.push({\n    json: {\n      batch_id,\n      id_rendicion: `${batch_id}-T${i + 1}`,\n      fecha_envio: fechaEnvio,\n      emp_nombre: b.emp_nombre || '',\n      emp_legajo: b.emp_legajo || '',\n      motivo_rendicion: b.rendicion_motivo || '',\n      explicacion_audio_transcrita: b.explicacion_audio_transcrita || '',\n      ticket_indice: i + 1,\n      ticket_categoria: b[`ticket_categoria_${i}`] ?? '',\n      ticket_obs: b[`ticket_obs_${i}`] || '',\n      folder_safe_name,\n      drive_subfolder_name: folder_safe_name,\n      drive_parent_folder_id: parentId\n    },\n    binary: bin ? { ticket_foto: bin } : {}\n  });\n}\nif (!out.length) throw new Error('total_tickets_enviados inválido o 0 tickets.');\nreturn out;"
+        "jsCode": "const item = $input.first();\nconst MANUAL = \"MANUAL DE \\u00c9TICA Y POL\\u00cdTICAS DE REEMBOLSO DE GASTOS\\n1. PRINCIPIOS GENERALES\\nToda rendici\\u00f3n de gastos debe basarse en el principio de buena fe y transparencia. El empleado es responsable de la veracidad de los datos cargados y de la integridad de los comprobantes adjuntos.\\n2. REQUISITOS DE DOCUMENTACI\\u00d3N\\nComprobantes V\\u00e1lidos: Solo se aceptar\\u00e1n facturas o tickets fiscales legales (Ticket Factura A, B, C o Ticket fiscal). No se admiten \\\"comandas\\\", \\\"notas de venta\\\" o \\\"presupuestos\\\".\\nLegibilidad: El comprobante debe ser n\\u00edtido. Si los datos clave (CUIT, Fecha, Monto) no son legibles por el sistema de visi\\u00f3n, el gasto ser\\u00e1 marcado para revisi\\u00f3n manual obligatoria.\\nPlazos: Los gastos deben rendirse dentro de los 15 d\\u00edas corridos posteriores a la fecha de emisi\\u00f3n del comprobante.\\n3. CATEGOR\\u00cdAS Y L\\u00cdMITES DE GASTO\\nAlimentaci\\u00f3n (Vi\\u00e1ticos):\\nEl l\\u00edmite diario para gastos de almuerzo o cena es de $30.000.\\nNo se reembolsar\\u00e1n gastos que excedan este monto sin una justificaci\\u00f3n previa aprobada por la gerencia.\\nTransporte y Combustible:\\nSe reembolsar\\u00e1n gastos de combustible solo para veh\\u00edculos autorizados de la flota.\\nLos servicios de movilidad (Apps de transporte) solo se permiten para traslados laborales directos.\\nAlojamiento:\\nDebe contar con reserva previa. No se cubren gastos de \\\"Minibar\\\" o servicios extra de hoteler\\u00eda no autorizados.\\n4. PROHIBICIONES ESTRICTAS (COMPLIANCE)\\nQueda terminantemente prohibido solicitar el reembolso de:\\nBebidas Alcoh\\u00f3licas: No se autoriza el pago de alcohol en almuerzos o cenas de trabajo.\\nGastos Personales: Art\\u00edculos de farmacia, indumentaria, cine, tabaco o regalos personales.\\nMultas: No se reembolsan multas de tr\\u00e1nsito o estacionamiento bajo ninguna circunstancia.\\nDuplicidad: Intentar rendir dos veces el mismo comprobante ser\\u00e1 considerado una falta grave al c\\u00f3digo de \\u00e9tica.\\n5. PROCESO DE APROBACI\\u00d3N\\nTodo gasto que supere los $50.000 de forma individual, aunque cumpla con la categor\\u00eda, ser\\u00e1 derivado autom\\u00e1ticamente a una revisi\\u00f3n jer\\u00e1rquica superior.\\nEl sistema calcular\\u00e1 un Score de Compliance. Si la IA detecta una discrepancia entre la foto del ticket y la categor\\u00eda seleccionada, la rendici\\u00f3n quedar\\u00e1 bloqueada hasta la intervenci\\u00f3n humana.\";\nreturn [{\n  json: {\n    ...item.json,\n    manual_etica_text: MANUAL\n  },\n  binary: item.binary || {}\n}];"
+      },
+      "id": "code-manual-etica-kb",
+      "name": "Code — Manual ética (KB)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        180
+      ],
+      "notesInFlow": true,
+      "notes": "v2.0: embebe el Manual de Ética y lo pasa al Vector Store antes de expandir tickets."
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "id": "embeddings-openai-manual-kb",
+      "name": "Embeddings OpenAI — Manual KB",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        680,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.manual_etica_text }}",
+        "textSplittingMode": "simple",
+        "options": {}
+      },
+      "id": "doc-loader-manual-etica",
+      "name": "Default Data Loader — Manual Ética",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        680,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "memoryKey": {
+          "mode": "id",
+          "value": "={{ $('Variables — Config').first().json.manual_etica_id }}"
+        },
+        "clearStore": true
+      },
+      "id": "vs-insert-manual-etica",
+      "name": "Simple Vector Store — Insert Manual Ética",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreInMemory",
+      "typeVersion": 1.3,
+      "position": [
+        860,
+        180
+      ],
+      "notesInFlow": true,
+      "notes": "In-memory; mismo memoryKey que Retrieve. clearStore=true por ejecución."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const k = $('Code — Manual ética (KB)').first();\nif (!k?.json) throw new Error('Manual ética (KB) no disponible');\nreturn [{ json: { ...k.json }, binary: k.binary || {} }];"
+      },
+      "id": "code-normalizar-tras-insert-kb",
+      "name": "Code — Normalizar tras insert KB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        180
+      ],
+      "notesInFlow": true,
+      "notes": "El Vector Store insert puede emitir un ítem por chunk; devolvemos un solo ítem (payload original) para Expandir Tickets."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const idx = $itemIndex;\nconst base = $('Code — Expandir Tickets').all()[idx].json;\nconst visionJ = $('OpenAI — OCR + Compliance (visión)').all()[idx]?.json || {};\n\nfunction coerceLlmText(m) {\n  if (m == null) return '';\n  if (typeof m === 'string') return m;\n  let t = m.content ?? m.text ?? m.output ?? m.response;\n  if (t && typeof t === 'object') {\n    t = t.text ?? t.output ?? t.message?.content ?? t.content ?? (Array.isArray(t.generations) ? String(t.generations[0]?.[0]?.text ?? '') : JSON.stringify(t));\n  }\n  return String(t ?? '');\n}\n\nconst raw = coerceLlmText(visionJ);\nconst ocrSummary = raw.slice(0, 12000);\n\nconst rag_user_message =\n  'Antes de procesar el gasto, consultá el Manual de Ética en la base vectorial (contexto recuperado). Compará los datos del ticket con prohibiciones y límites. Generá un Compliance_Score de 0 a 1.\\n\\n' +\n  'Categoría declarada por el empleado: ' + String(base.ticket_categoria || '') + '\\n' +\n  'Observación empleado: ' + String(base.ticket_obs || '') + '\\n' +\n  'Motivo rendición: ' + String(base.motivo_rendicion || '') + '\\n' +\n  'Transcripción voz (si hubo): ' + String(base.explicacion_audio_transcrita || '') + '\\n\\n' +\n  'Datos extraídos por visión (OCR / JSON):\\n' + ocrSummary + '\\n\\n' +\n  'Tu respuesta final debe ser SOLO el objeto JSON solicitado en las instrucciones del sistema (sin markdown).';\n\nreturn { json: { ...base, rag_user_message } };"
+      },
+      "id": "code-pre-rag-etica",
+      "name": "Code — Preparar RAG ética",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2580,
+        480
+      ],
+      "notesInFlow": true,
+      "notes": "Arma rag_user_message para la Question and Answer Chain (un ítem por ticket)."
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "id": "embeddings-openai-rag",
+      "name": "Embeddings OpenAI — RAG retrieve",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2580,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "retrieve",
+        "memoryKey": {
+          "mode": "id",
+          "value": "={{ $('Variables — Config').first().json.manual_etica_id }}"
+        }
+      },
+      "id": "vs-retrieve-rag-etica",
+      "name": "Simple Vector Store — Retrieve Ética",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreInMemory",
+      "typeVersion": 1.3,
+      "position": [
+        2760,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "topK": 6
+      },
+      "id": "retriever-vs-etica",
+      "name": "Vector Store Retriever — Ética",
+      "type": "@n8n/n8n-nodes-langchain.retrieverVectorStore",
+      "typeVersion": 1,
+      "position": [
+        2940,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {}
+      },
+      "id": "lm-chat-rag-etica",
+      "name": "OpenAI Chat Model — RAG ética",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.1,
+      "position": [
+        2760,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.rag_user_message }}",
+        "options": {
+          "systemPromptTemplate": "Sos un auditor de compliance para rendiciones de gastos (Argentina). Usá el contexto recuperado del Manual de Ética y políticas de reembolso. El mensaje del usuario (input) incluye datos OCR del comprobante y la categoría declarada. Antes de procesar el gasto, consultá el Manual de Ética en el contexto. Compará los datos del ticket con prohibiciones y límites establecidos. Generá un Compliance_Score de 0 a 1 (1 = plenamente conforme; 0 = infracción clara o bloqueo). Respondé SOLO un objeto JSON válido (sin markdown). Incluí la palabra json en tu respuesta. Claves exactas: Compliance_Score (número), ethics_observaciones (string breve), violaciones_etica (array de strings), requiere_revision_manual (boolean), categoria_coherente (boolean), bloqueado_por_politica (boolean).\n\nContexto del manual (fragmentos recuperados):\n{context}"
+        }
+      },
+      "id": "chain-rag-etica-manual",
+      "name": "Question and Answer Chain — Ética (RAG Manual)",
+      "type": "@n8n/n8n-nodes-langchain.chainRetrievalQa",
+      "typeVersion": 1.6,
+      "position": [
+        2940,
+        480
+      ],
+      "notesInFlow": true,
+      "notes": "RAG sobre Manual de Ética (Simple Vector Store). Salida en json.response (texto)."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $('Code — Manual ética (KB)').first();\nconst b = item.json.body || item.json;\nconst total = parseInt(String(b.total_tickets_enviados ?? '0'), 10) || 0;\nconst batch_id = `RND-${Date.now()}-${String(b.emp_legajo || 'X').replace(/[^a-zA-Z0-9_-]/g, '')}`;\nconst fechaEnvio = b.fecha_envio || new Date().toISOString();\nconst safeLegajo = String(b.emp_legajo || 'LEG').replace(/[^a-zA-Z0-9_-]/g, '_');\nconst safeNombre = String(b.emp_nombre || 'Nombre').replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ _-]/g, '').trim().replace(/\\s+/g, '_');\nconst folder_safe_name = `${safeLegajo}_${safeNombre}`;\nconst parentId = item.json.drive_parent_folder_id;\nif (!parentId) throw new Error('Completá drive_parent_folder_id en el nodo Variables — Config (carpeta raíz Rendiciones en Drive).');\nconst out = [];\nfor (let i = 0; i < total; i++) {\n  const key = `ticket_foto_${i}`;\n  const bin = item.binary?.[key];\n  out.push({\n    json: {\n      batch_id,\n      id_rendicion: `${batch_id}-T${i + 1}`,\n      fecha_envio: fechaEnvio,\n      emp_nombre: b.emp_nombre || '',\n      emp_legajo: b.emp_legajo || '',\n      motivo_rendicion: b.rendicion_motivo || '',\n      explicacion_audio_transcrita: b.explicacion_audio_transcrita || '',\n      ticket_indice: i + 1,\n      ticket_categoria: b[`ticket_categoria_${i}`] ?? '',\n      ticket_obs: b[`ticket_obs_${i}`] || '',\n      folder_safe_name,\n      drive_subfolder_name: folder_safe_name,\n      drive_parent_folder_id: parentId\n    },\n    binary: bin ? { ticket_foto: bin } : {}\n  });\n}\nif (!out.length) throw new Error('total_tickets_enviados inválido o 0 tickets.');\nreturn out;"
       },
       "id": "code-expand-tickets",
       "name": "Code — Expandir Tickets",
@@ -382,7 +558,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const j = $input.item.json;\nconst audio = String(j.explicacion_audio_transcrita || '').trim();\nconst cat = String(j.ticket_categoria || '');\nconst motor = 'openai_vision';\nconst RULES = `Sos un asistente para rendiciones de gastos (Argentina). Vas a ver la IMAGEN del comprobante (OCR + interpretación).\n\nMontos (crítico en tickets térmicos / factura A o tique):\n- Los totales en ARS suelen ser grandes (5–7 dígitos enteros + centavos). Un error frecuente es \\\"perder\\\" un cero o un dígito en el TOTAL (ej. leer 11103,02 en vez de 111003,02).\n- Si el ticket muestra el total como 111003.02 sin separador de miles, el PUNTO son los DECIMALES: es 111.003,02 pesos, NO 11.100,302 ni 1.110.030,2.\n- Buscá la línea TOTAL / IMPORTE TOTAL y releé dígito por dígito. Si el mismo importe se repite (ej. junto a Tarjeta / MODO), usá ambas lecturas para validar.\n- Si hay desglose AFIP (Subtotal neto gravado + IVA + Impuestos internos / otros tributos), extraé esos tres importes y comprobá que sumen el TOTAL. Si el TOTAL impreso es dudoso pero la suma de líneas claras es coherente, asigná monto_total = esa suma.\n\nOtros:\n- Fecha y CUIT del proveedor si figuran.\n- No evalúes topes de empresa. Whisper solo para contradicciones obvias con el papel.\n- Compliance_Score 0–1 por legibilidad y coherencia interna del comprobante.`;\nconst ocr_compliance_prompt = `${RULES}\\n\\nMotor (referencia): ${motor}\\nCategoría declarada por el empleado: ${cat}\\nTranscripción voz (Whisper): ${audio || '(sin audio)'}\\n\\n--- Tarea ---\\nAnalizá la imagen del comprobante.\\n\\n--- Salida obligatoria ---\\nUn solo objeto JSON (sin markdown). Claves:\\n- monto_total (number|null) — total a pagar, número JS con punto decimal\\n- importe_neto_gravado (number|null) — si hay \\\"subtotal neto gravado\\\" o equivalente\\n- importe_iva (number|null) — si hay IVA discriminado\\n- importe_otros_tributos (number|null) — impuestos internos / otros tributos / similar\\n- moneda (string)\\n- fecha_factura (YYYY-MM-DD|null)\\n- CUIT_proveedor (solo dígitos o null)\\n- Compliance_Score (0-1)\\n- compliance_observaciones (breve; podés mencionar verificación suma vs TOTAL)\\n- violaciones (array de strings)\\n- parser_engine exactamente \\\"openai_vision\\\"\\nSi no hay desglose, los importe_* en null.`;\nreturn {\n  json: { ...j, ocr_compliance_prompt, parser_engine: motor },\n  binary: $input.item.binary || {}\n};"
+        "jsCode": "const j = $input.item.json;\nconst audio = String(j.explicacion_audio_transcrita || '').trim();\nconst cat = String(j.ticket_categoria || '');\nconst motor = 'openai_vision';\nconst RULES = `Sos un asistente para rendiciones de gastos (Argentina). Vas a ver la IMAGEN del comprobante (OCR + interpretación).\n\nMontos (crítico en tickets térmicos / factura A o tique):\n- Los totales en ARS suelen ser grandes (5–7 dígitos enteros + centavos). Un error frecuente es \\\"perder\\\" un cero o un dígito en el TOTAL (ej. leer 11103,02 en vez de 111003,02).\n- Si el ticket muestra el total como 111003.02 sin separador de miles, el PUNTO son los DECIMALES: es 111.003,02 pesos, NO 11.100,302 ni 1.110.030,2.\n- Buscá la línea TOTAL / IMPORTE TOTAL y releé dígito por dígito. Si el mismo importe se repite (ej. junto a Tarjeta / MODO), usá ambas lecturas para validar.\n- Si hay desglose AFIP (Subtotal neto gravado + IVA + Impuestos internos / otros tributos), extraé esos tres importes y comprobá que sumen el TOTAL. Si el TOTAL impreso es dudoso pero la suma de líneas claras es coherente, asigná monto_total = esa suma.\n\nOtros:\n- Fecha y CUIT del proveedor si figuran.\n- No evalúes topes de empresa. Whisper solo para contradicciones obvias con el papel.\n- Compliance_Score 0–1 por legibilidad y coherencia interna del comprobante.`;\nconst ocr_compliance_prompt = `${RULES}\\n\\nMotor (referencia): ${motor}\\nCategoría declarada por el empleado: ${cat}\\nTranscripción voz (Whisper): ${audio || '(sin audio)'}\\n\\n--- Tarea ---\\nAnalizá la imagen del comprobante.\\n\\n--- Salida obligatoria ---\\nUn solo objeto JSON (sin markdown). Claves:\\n- monto_total (number|null) — total a pagar, número JS con punto decimal\\n- importe_neto_gravado (number|null) — si hay \\\"subtotal neto gravado\\\" o equivalente\\n- importe_iva (number|null) — si hay IVA discriminado\\n- importe_otros_tributos (number|null) — impuestos internos / otros tributos / similar\\n- moneda (string)\\n- fecha_factura (YYYY-MM-DD|null)\\n- CUIT_proveedor (solo dígitos o null)\\n- Compliance_Score (0-1) — solo legibilidad y coherencia interna del comprobante (no evalúes políticas de empresa)\\n- compliance_observaciones (breve; podés mencionar verificación suma vs TOTAL)\\n- violaciones (array de strings)\\n- parser_engine exactamente \\\"openai_vision\\\"\\nSi no hay desglose, los importe_* en null.`;\nreturn {\n  json: { ...j, ocr_compliance_prompt, parser_engine: motor },\n  binary: $input.item.binary || {}\n};"
       },
       "id": "code-prompt-ocr-compliance-vision",
       "name": "Code — Prompt OCR + Compliance (visión)",
@@ -444,7 +620,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const idx = $itemIndex;\nconst base = $('Code — Expandir Tickets').all()[idx].json;\nconst driveJ = $('Drive — Subir foto').all()[idx]?.json || {};\nconst visionJ = $('OpenAI — OCR + Compliance (visión)').all()[idx]?.json || {};\n\nfunction coerceLlmText(m) {\n  if (m == null) return '';\n  if (typeof m === 'string') return m;\n  let t = m.content ?? m.text ?? m.output ?? m.response;\n  if (t && typeof t === 'object') {\n    t = t.text ?? t.output ?? t.message?.content ?? t.content ?? (Array.isArray(t.generations) ? String(t.generations[0]?.[0]?.text ?? '') : JSON.stringify(t));\n  }\n  return String(t ?? '');\n}\n\nfunction parseComplianceJson(raw) {\n  let s = String(raw || '').trim();\n  s = s.replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/i, '').trim();\n  if (!s) return null;\n  try {\n    return JSON.parse(s);\n  } catch (e1) {\n    try {\n      const i = s.indexOf('{');\n      const j = s.lastIndexOf('}');\n      if (i >= 0 && j > i) return JSON.parse(s.slice(i, j + 1));\n    } catch (e2) {}\n  }\n  try {\n    const m = s.match(/\\{[\\s\\S]*\\}/);\n    if (m) return JSON.parse(m[0]);\n  } catch (e3) {}\n  return null;\n}\n\nfunction normalizeKeys(o) {\n  if (!o || typeof o !== 'object') return {};\n  const out = { ...o };\n  if (out.monto_total == null && out.montoTotal != null) out.monto_total = out.montoTotal;\n  if (out.fecha_factura == null && out.fechaFactura != null) out.fecha_factura = out.fechaFactura;\n  if (out.CUIT_proveedor == null && out.cuit_proveedor != null) out.CUIT_proveedor = out.cuit_proveedor;\n  if (out.Compliance_Score == null && out.compliance_score != null) out.Compliance_Score = out.compliance_score;\n  if (out.importe_neto_gravado == null) {\n    const x = out.subtotal_neto_gravado ?? out.subtotal_importe_neto_gravado ?? out.neto_gravado;\n    if (x != null) out.importe_neto_gravado = x;\n  }\n  if (out.importe_iva == null && out.iva != null) out.importe_iva = out.iva;\n  if (out.importe_otros_tributos == null) {\n    const x =\n      out.impuestos_internos ??\n      out.importe_impuestos_internos ??\n      out.importe_total_otros_tributos ??\n      out.otros_tributos;\n    if (x != null) out.importe_otros_tributos = x;\n  }\n  return out;\n}\n\nconst parsed = parseComplianceJson(coerceLlmText(visionJ));\nlet ocr = normalizeKeys(parsed) || {};\nocr = {\n  monto_total: null,\n  moneda: '',\n  fecha_factura: null,\n  CUIT_proveedor: null,\n  Compliance_Score: 0.5,\n  compliance_observaciones: '',\n  violaciones: [],\n  parser_engine: 'openai_vision',\n  ...ocr\n};\n\nconst pe = 'openai_vision';\n\nfunction normalizeAmount(v) {\n  if (v === null || v === undefined) return null;\n  if (typeof v === 'number') return Number.isFinite(v) ? v : null;\n\n  const s = String(v).trim();\n  if (!s) return null;\n\n  let cleaned = s.replace(/[^\\d,\\.\\-]/g, '');\n\n  if (cleaned.includes(',') && cleaned.includes('.')) {\n    cleaned = cleaned.replace(/\\./g, '').replace(',', '.');\n  } else if (cleaned.includes(',')) {\n    cleaned = cleaned.replace(',', '.');\n  }\n\n  const n = parseFloat(cleaned);\n  return Number.isFinite(n) ? n : null;\n}\n\nfunction pickMontoTotal(ocr) {\n  const direct = normalizeAmount(ocr.monto_total);\n  const a = normalizeAmount(ocr.importe_neto_gravado);\n  const b = normalizeAmount(ocr.importe_iva);\n  const c = normalizeAmount(ocr.importe_otros_tributos);\n  if (a != null && b != null && c != null && Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(c)) {\n    const sum = Math.round((a + b + c) * 100) / 100;\n    if (!Number.isFinite(sum) || sum <= 0) return direct;\n    if (direct == null) return sum;\n    if (Math.abs(sum - direct) > 0.5) return sum;\n    return direct;\n  }\n  return direct;\n}\n\nfunction normalizeCuit(v) {\n  if (v === null || v === undefined) return '';\n  const s = String(v).replace(/[^\\d]/g, '');\n  return s || '';\n}\n\nlet score = Number(ocr.Compliance_Score);\nif (!Number.isFinite(score)) score = 0.5;\nscore = Math.round(Math.min(1, Math.max(0, score)) * 1000) / 1000;\n\nconst link = driveJ.webViewLink || driveJ.webContentLink || '';\nconst idFoto = driveJ.id || driveJ.fileId || '';\nconst montoDirect = normalizeAmount(ocr.monto_total);\nconst monto = pickMontoTotal(ocr);\nlet obsComb = String(ocr.compliance_observaciones || '').slice(0, 2000);\nif (\n  monto != null &&\n  montoDirect != null &&\n  Math.abs(monto - montoDirect) > 0.5\n) {\n  obsComb = (obsComb ? obsComb + ' ' : '') + 'Monto total corregido por suma (neto gravado + IVA + otros tributos): ' + montoDirect + ' → ' + monto + '.';\n  obsComb = obsComb.slice(0, 2000);\n}\n\nconst estado = score < 0.7 ? 'Requiere Revisión Manual' : 'Pendiente';\n\nreturn {\n  json: {\n    ...base,\n    id_foto_drive: idFoto,\n    link_foto_drive: link,\n    fecha_ticket_ia: ocr.fecha_factura || '',\n    monto_total_ia: monto === null ? '' : monto,\n    moneda_ia: ocr.moneda || '',\n    cuit_proveedor_ia: normalizeCuit(ocr.CUIT_proveedor),\n    Compliance_Score: score,\n    Estado: estado,\n    estado_compliance_obs: obsComb,\n    violaciones_compliance: Array.isArray(ocr.violaciones) ? ocr.violaciones.join('; ') : '',\n    parser_engine: pe\n  }\n};"
+        "jsCode": "const idx = $itemIndex;\nconst base = $('Code — Expandir Tickets').all()[idx].json;\nconst driveJ = $('Drive — Subir foto').all()[idx]?.json || {};\nconst visionJ = $('OpenAI — OCR + Compliance (visión)').all()[idx]?.json || {};\n\nfunction coerceLlmText(m) {\n  if (m == null) return '';\n  if (typeof m === 'string') return m;\n  let t = m.content ?? m.text ?? m.output ?? m.response;\n  if (t && typeof t === 'object') {\n    t = t.text ?? t.output ?? t.message?.content ?? t.content ?? (Array.isArray(t.generations) ? String(t.generations[0]?.[0]?.text ?? '') : JSON.stringify(t));\n  }\n  return String(t ?? '');\n}\n\nfunction parseComplianceJson(raw) {\n  let s = String(raw || '').trim();\n  s = s.replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/i, '').trim();\n  if (!s) return null;\n  try {\n    return JSON.parse(s);\n  } catch (e1) {\n    try {\n      const i = s.indexOf('{');\n      const j = s.lastIndexOf('}');\n      if (i >= 0 && j > i) return JSON.parse(s.slice(i, j + 1));\n    } catch (e2) {}\n  }\n  try {\n    const m = s.match(/\\{[\\s\\S]*\\}/);\n    if (m) return JSON.parse(m[0]);\n  } catch (e3) {}\n  return null;\n}\n\nfunction normalizeKeys(o) {\n  if (!o || typeof o !== 'object') return {};\n  const out = { ...o };\n  if (out.monto_total == null && out.montoTotal != null) out.monto_total = out.montoTotal;\n  if (out.fecha_factura == null && out.fechaFactura != null) out.fecha_factura = out.fechaFactura;\n  if (out.CUIT_proveedor == null && out.cuit_proveedor != null) out.CUIT_proveedor = out.cuit_proveedor;\n  if (out.Compliance_Score == null && out.compliance_score != null) out.Compliance_Score = out.compliance_score;\n  if (out.importe_neto_gravado == null) {\n    const x = out.subtotal_neto_gravado ?? out.subtotal_importe_neto_gravado ?? out.neto_gravado;\n    if (x != null) out.importe_neto_gravado = x;\n  }\n  if (out.importe_iva == null && out.iva != null) out.importe_iva = out.iva;\n  if (out.importe_otros_tributos == null) {\n    const x =\n      out.impuestos_internos ??\n      out.importe_impuestos_internos ??\n      out.importe_total_otros_tributos ??\n      out.otros_tributos;\n    if (x != null) out.importe_otros_tributos = x;\n  }\n  return out;\n}\n\nconst parsed = parseComplianceJson(coerceLlmText(visionJ));\nlet ocr = normalizeKeys(parsed) || {};\nocr = {\n  monto_total: null,\n  moneda: '',\n  fecha_factura: null,\n  CUIT_proveedor: null,\n  Compliance_Score: 0.5,\n  compliance_observaciones: '',\n  violaciones: [],\n  parser_engine: 'openai_vision',\n  ...ocr\n};\n\nconst pe = 'openai_vision';\n\nfunction normalizeAmount(v) {\n  if (v === null || v === undefined) return null;\n  if (typeof v === 'number') return Number.isFinite(v) ? v : null;\n\n  const s = String(v).trim();\n  if (!s) return null;\n\n  let cleaned = s.replace(/[^\\d,\\.\\-]/g, '');\n\n  if (cleaned.includes(',') && cleaned.includes('.')) {\n    cleaned = cleaned.replace(/\\./g, '').replace(',', '.');\n  } else if (cleaned.includes(',')) {\n    cleaned = cleaned.replace(',', '.');\n  }\n\n  const n = parseFloat(cleaned);\n  return Number.isFinite(n) ? n : null;\n}\n\nfunction pickMontoTotal(ocr) {\n  const direct = normalizeAmount(ocr.monto_total);\n  const a = normalizeAmount(ocr.importe_neto_gravado);\n  const b = normalizeAmount(ocr.importe_iva);\n  const c = normalizeAmount(ocr.importe_otros_tributos);\n  if (a != null && b != null && c != null && Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(c)) {\n    const sum = Math.round((a + b + c) * 100) / 100;\n    if (!Number.isFinite(sum) || sum <= 0) return direct;\n    if (direct == null) return sum;\n    if (Math.abs(sum - direct) > 0.5) return sum;\n    return direct;\n  }\n  return direct;\n}\n\nfunction normalizeCuit(v) {\n  if (v === null || v === undefined) return '';\n  const s = String(v).replace(/[^\\d]/g, '');\n  return s || '';\n}\n\nlet ocrScore = Number(ocr.Compliance_Score);\nif (!Number.isFinite(ocrScore)) ocrScore = 0.5;\nocrScore = Math.round(Math.min(1, Math.max(0, ocrScore)) * 1000) / 1000;\n\nconst ragJ = $('Question and Answer Chain — Ética (RAG Manual)').all()[idx]?.json || {};\n\nfunction parseEthicsJson(raw) {\n  let s = String(raw || '').trim();\n  s = s.replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/i, '').trim();\n  if (!s) return null;\n  try {\n    return JSON.parse(s);\n  } catch (e1) {\n    try {\n      const i = s.indexOf('{');\n      const j = s.lastIndexOf('}');\n      if (i >= 0 && j > i) return JSON.parse(s.slice(i, j + 1));\n    } catch (e2) {}\n  }\n  try {\n    const m = s.match(/\\{[\\s\\S]*\\}/);\n    if (m) return JSON.parse(m[0]);\n  } catch (e3) {}\n  return null;\n}\n\nconst ethics = parseEthicsJson(ragJ.response) || {};\nlet ethicsScore = Number(ethics.Compliance_Score);\nif (!Number.isFinite(ethicsScore)) ethicsScore = 0.5;\nethicsScore = Math.round(Math.min(1, Math.max(0, ethicsScore)) * 1000) / 1000;\n\nlet score = Math.round(Math.min(ocrScore, ethicsScore) * 1000) / 1000;\n\nconst link = driveJ.webViewLink || driveJ.webContentLink || '';\nconst idFoto = driveJ.id || driveJ.fileId || '';\nconst montoDirect = normalizeAmount(ocr.monto_total);\nconst monto = pickMontoTotal(ocr);\nlet obsComb = String(ocr.compliance_observaciones || '').slice(0, 2000);\nif (\n  monto != null &&\n  montoDirect != null &&\n  Math.abs(monto - montoDirect) > 0.5\n) {\n  obsComb = (obsComb ? obsComb + ' ' : '') + 'Monto total corregido por suma (neto gravado + IVA + otros tributos): ' + montoDirect + ' → ' + monto + '.';\n  obsComb = obsComb.slice(0, 2000);\n}\n\nconst ethObs = String(ethics.ethics_observaciones || '').trim();\nif (ethObs) {\n  obsComb = (obsComb ? obsComb + ' | ' : '') + '[Ética/RAG] ' + ethObs.slice(0, 1200);\n  obsComb = obsComb.slice(0, 2000);\n}\nconst violEth = Array.isArray(ethics.violaciones_etica) ? ethics.violaciones_etica.filter(Boolean).join('; ') : '';\nif (violEth) {\n  obsComb = (obsComb ? obsComb + ' | ' : '') + 'Violaciones manual: ' + violEth.slice(0, 600);\n  obsComb = obsComb.slice(0, 2000);\n}\n\nconst bloqueado = ethics.bloqueado_por_politica === true || ethics.categoria_coherente === false;\nconst revisionEtica = ethics.requiere_revision_manual === true;\nlet estado = 'Pendiente';\nif (bloqueado) estado = 'Bloqueado — Revisión humana';\nelse if (revisionEtica || score < 0.7) estado = 'Requiere Revisión Manual';\nconst montoNum = monto === null || monto === undefined ? null : Number(monto);\nif (montoNum != null && Number.isFinite(montoNum) && montoNum > 50000 && estado === 'Pendiente') {\n  estado = 'Requiere Revisión Manual';\n}\n\nreturn {\n  json: {\n    ...base,\n    id_foto_drive: idFoto,\n    link_foto_drive: link,\n    fecha_ticket_ia: ocr.fecha_factura || '',\n    monto_total_ia: monto === null ? '' : monto,\n    moneda_ia: ocr.moneda || '',\n    cuit_proveedor_ia: normalizeCuit(ocr.CUIT_proveedor),\n    Compliance_Score: score,\n    Estado: estado,\n    estado_compliance_obs: obsComb,\n    violaciones_compliance: [\n      Array.isArray(ocr.violaciones) ? ocr.violaciones.join('; ') : '',\n      violEth ? violEth : ''\n    ].filter(Boolean).join(' | '),\n    parser_engine: pe + '+rag_etica'\n  }\n};"
       },
       "id": "code-unir-fila-sheet",
       "name": "Code — Unir fila Sheet",
@@ -460,7 +636,7 @@
     {
       "parameters": {
         "color": 4,
-        "content": "## Flujo lectura\\nOpenAI visión (gpt-4o) sobre la foto del comprobante: OCR + JSON de compliance en un nodo. Whisper alimenta el prompt si hubo audio.",
+        "content": "## v2.0 RAG + visión\\n- **Visión (gpt-4o):** OCR y legibilidad (Compliance_Score documento).\\n- **RAG:** Manual de Ética en Vector Store in-memory → Question and Answer Chain → Compliance_Score ética.\\n- **Sheet:** `Compliance_Score` = min(ocr, ética); proxy/mail/audio sin cambios.",
         "height": 200,
         "width": 380
       },
@@ -914,7 +1090,7 @@
       "main": [
         [
           {
-            "node": "Code — Expandir Tickets",
+            "node": "Code — Manual ética (KB)",
             "type": "main",
             "index": 0
           }
@@ -1081,7 +1257,7 @@
       "main": [
         [
           {
-            "node": "Code — Unir fila Sheet",
+            "node": "Code — Preparar RAG ética",
             "type": "main",
             "index": 0
           }
@@ -1250,6 +1426,127 @@
           {
             "node": "Sheets — Append Audit_Logs",
             "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Manual ética (KB)": {
+      "main": [
+        [
+          {
+            "node": "Simple Vector Store — Insert Manual Ética",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI — Manual KB": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Simple Vector Store — Insert Manual Ética",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader — Manual Ética": {
+      "ai_document": [
+        [
+          {
+            "node": "Simple Vector Store — Insert Manual Ética",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Vector Store — Insert Manual Ética": {
+      "main": [
+        [
+          {
+            "node": "Code — Normalizar tras insert KB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Normalizar tras insert KB": {
+      "main": [
+        [
+          {
+            "node": "Code — Expandir Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Preparar RAG ética": {
+      "main": [
+        [
+          {
+            "node": "Question and Answer Chain — Ética (RAG Manual)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Question and Answer Chain — Ética (RAG Manual)": {
+      "main": [
+        [
+          {
+            "node": "Code — Unir fila Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model — RAG ética": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Question and Answer Chain — Ética (RAG Manual)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Store Retriever — Ética": {
+      "ai_retriever": [
+        [
+          {
+            "node": "Question and Answer Chain — Ética (RAG Manual)",
+            "type": "ai_retriever",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Vector Store — Retrieve Ética": {
+      "ai_vectorStore": [
+        [
+          {
+            "node": "Vector Store Retriever — Ética",
+            "type": "ai_vectorStore",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI — RAG retrieve": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Simple Vector Store — Retrieve Ética",
+            "type": "ai_embedding",
             "index": 0
           }
         ]
