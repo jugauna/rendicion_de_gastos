@@ -1,5 +1,7 @@
 <?php
 /**
+ * Rendición de gastos — proxy (app versión 1.0, ver archivo VERSION en el repo).
+ *
  * PROXY DE SEGURIDAD - DEBUG VERSION
  *
  * Multimodal: reenvía por POST multipart todos los campos del formulario, múltiples ticket_foto_N

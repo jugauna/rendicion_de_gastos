@@ -2,7 +2,7 @@
   "name": "Audit — Error logs a Google Sheets (Audit_Logs)",
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Asigná este workflow como «Error workflow» en Ajustes del flujo principal (Rendición de Gastos). Hoja Audit_Logs fila 1: Timestamp | Outcome | Workflow_Name | Execution_Id | Last_Node | Detail | Compliance_Score_Batch | Parser_Engine_Summary | Error_Message | Error_Stack | Execution_Url. OK y resumen compliance los escribe el flujo principal. Este flujo añade Outcome=Error (campos batch vacíos). Misma credencial y spreadsheet."
+    "description": "App v1.0 | Asigná este workflow como «Error workflow» en Ajustes del flujo principal (Rendición de Gastos). Hoja Audit_Logs fila 1: Timestamp | Outcome | Workflow_Name | Execution_Id | Last_Node | Detail | Compliance_Score_Batch | Parser_Engine_Summary | Error_Message | Error_Stack | Execution_Url. OK y resumen compliance los escribe el flujo principal. Este flujo añade Outcome=Error (campos batch vacíos). Misma credencial y spreadsheet."
   },
   "settings": {
     "executionOrder": "v1"

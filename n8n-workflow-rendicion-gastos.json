@@ -2,7 +2,7 @@
   "name": "Rendición de Gastos — Drive + IA + Sheets + Aprobación",
   "meta": {
     "templateCredsSetupCompleted": false,
-    "description": "Repo: https://github.com/jugauna/rendicion_de_gastos.git | IA: OpenAI Whisper (audio opcional) + OpenAI visión (gpt-4o) sobre la imagen del comprobante: OCR y compliance en un solo paso. Google Drive + Sheets + mail gerente/contable + Wait webhook + Audit_Logs. X-N8N-SECRET / IF Secret; credenciales OpenAI y Google en n8n.",
+    "description": "App v1.0 | Repo: https://github.com/jugauna/rendicion_de_gastos.git | IA: OpenAI Whisper (audio opcional) + OpenAI visión (gpt-4o) sobre la imagen del comprobante: OCR y compliance en un solo paso. Google Drive + Sheets + mail gerente/contable + Wait webhook + Audit_Logs. X-N8N-SECRET / IF Secret; credenciales OpenAI y Google en n8n.",
     "instanceId": "rendicion-de-gastos-local"
   },
   "settings": {
